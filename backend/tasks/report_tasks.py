@@ -7,13 +7,12 @@ Celery async tasks for PPT/PDF generation per README:
 """
 import os
 from celery import Celery
-
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+from config import settings
 
 celery_app = Celery(
     "interlace",
-    broker=REDIS_URL,
-    backend=REDIS_URL.replace("/0", "/1"),
+    broker=settings.CELERY_BROKER_URL,
+    backend=settings.CELERY_RESULT_BACKEND,
 )
 
 celery_app.conf.update(

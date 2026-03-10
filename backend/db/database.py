@@ -3,16 +3,11 @@ db/database.py
 SQLAlchemy setup — SQLite (dev) / PostgreSQL (prod) per README
 19 data tables — migration warehouse
 """
-import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
+from config import settings
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "sqlite+aiosqlite:///./data/processed/warehouse.db"
-)
-
-engine = create_async_engine(DATABASE_URL, echo=False)
+engine = create_async_engine(settings.DATABASE_URL, echo=settings.DEBUG)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()
 

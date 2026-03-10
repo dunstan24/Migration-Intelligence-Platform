@@ -8,8 +8,8 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
+from config import settings
 import json
-import os
 
 router = APIRouter()
 
@@ -38,24 +38,22 @@ async def stream_claude(prompt: str):
     """
     Call Anthropic Claude API with streaming.
     Returns SSE tokens: data: {"token": "..."}\n\n
-    Sprint 5: real Anthropic client implementation.
     """
     import anthropic
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
+    if not settings.ANTHROPIC_API_KEY:
         # Dev fallback — mock stream
-        mock = f"[Mock response — add ANTHROPIC_API_KEY to .env]\n\nYour question was about: {prompt[:100]}..."
+        mock = f"[Mock response — tambahkan ANTHROPIC_API_KEY ke backend/.env]\n\nPertanyaan kamu: {prompt[:100]}..."
         for word in mock.split():
             yield f"data: {json.dumps({'token': word + ' '})}\n\n"
         yield "data: [DONE]\n\n"
         return
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
     with client.messages.stream(
-        model="claude-opus-4-6",
-        max_tokens=1024,
+        model=settings.CLAUDE_MODEL,
+        max_tokens=settings.CLAUDE_MAX_TOKENS,
         messages=[{"role": "user", "content": prompt}],
     ) as stream:
         for text in stream.text_stream:
