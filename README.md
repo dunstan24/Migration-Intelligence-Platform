@@ -281,10 +281,10 @@ FastAPI validates JWT / session token
 
 | Detail | Value |
 |--------|-------|
-| Tables | 19 data tables |
-| ORM | SQLAlchemy |
-| Migrations | Alembic (migration warehouse) |
-| Dev | SQLite (local) |
+| Tables | 5 data tables (`occupations`, `osl_shortages`, `quotas`, `eoi_submissions`, `nero_employment`) |
+| ORM | SQLAlchemy (async) |
+| Source | Raw CSV/Excel ingested via Pandas streaming ETL |
+| Dev | SQLite (local `warehouse.db`) |
 | Prod | PostgreSQL (Railway) |
 
 ---
@@ -293,10 +293,11 @@ FastAPI validates JWT / session token
 
 | Detail | Value |
 |--------|-------|
-| Format | `.joblib` serialised files |
-| Count | 4 models |
-| Loading | At app startup (once, into memory) |
-| Explainability | SHAP (SHapley Additive exPlanations) |
+| Format | `.joblib` serialised files (Scikit-Learn RandomForest Pipelines) |
+| Count | 4 models (Pathway, Shortage, Volume, Approval) |
+| Loading | At app startup (once, into memory via FastAPI Lifespan) |
+| Feature Engineering | Pipeline automated logic (`StandardScaler`, `SimpleImputer`, `OrdinalEncoder`) |
+| Explainability | Baseline mock-SHAP (Until UI feature maturity) |
 
 **Startup loading pattern:**
 ```python

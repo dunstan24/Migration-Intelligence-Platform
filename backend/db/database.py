@@ -23,5 +23,8 @@ async def get_db():
 
 
 async def init_db():
+    from . import models  # Import models here to register them with Base
+    import os
+    os.makedirs(os.path.dirname(DATABASE_URL.replace("sqlite+aiosqlite:///", "")), exist_ok=True)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
