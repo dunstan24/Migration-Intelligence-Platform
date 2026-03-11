@@ -1,11 +1,10 @@
 "use client";
 /**
  * EOI Analysis page
- * Fetches real data from:
- *   GET /api/data/summary          → KPI cards
- *   GET /api/data/eoi/monthly      → pool + invitations trend
- *   GET /api/data/eoi/occupations  → top occupations table
- *   GET /api/data/eoi/points       → points distribution
+ * GET /api/data/summary          → KPI cards
+ * GET /api/data/eoi/monthly      → pool + invitations trend
+ * GET /api/data/eoi/occupations  → top occupations table (year, state, visa, limit)
+ * GET /api/data/eoi/points       → points distribution (visa_type, state)
  */
 import { useState, useEffect } from "react";
 import {
@@ -19,7 +18,6 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
-  Cell,
 } from "recharts";
 import {
   C,
@@ -33,42 +31,8 @@ import {
 } from "@/components/ui";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
-
-// ── Fetchers ────────────────────────────────────────────────
-async function fetchSummary() {
-  const r = await fetch(`${API}/api/data/summary`);
-  return r.json();
-}
-async function fetchMonthly() {
-  const r = await fetch(`${API}/api/data/eoi/monthly`);
-  return r.json();
-}
-async function fetchOccupations(
-  year: number | null,
-  state: string,
-  limit: number,
-) {
-  const params = new URLSearchParams({ limit: String(limit) });
-  if (year) params.append("year", String(year));
-  if (state) params.append("state", state);
-  const r = await fetch(`${API}/api/data/eoi/occupations?${params}`);
-  return r.json();
-}
-async function fetchPoints(visaType: string, state: string) {
-  const params = new URLSearchParams();
-  if (visaType) params.append("visa_type", visaType);
-  if (state) params.append("state", state);
-  const r = await fetch(`${API}/api/data/eoi/points?${params}`);
-  return r.json();
-}
-
-// ── Helpers ──────────────────────────────────────────────────
-function fmt(n: number) {
-  return n?.toLocaleString() ?? "—";
-}
-
-const STATES = ["", "NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"];
-const VISA_TYPES = ["", "190", "491", "189", "188"];
+const fmt = (n: number) => n?.toLocaleString() ?? "—";
+const STATES = ["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"];
 
 const selectStyle = {
   background: C.bg,
@@ -81,7 +45,6 @@ const selectStyle = {
   cursor: "pointer",
 };
 
-// ── Main Component ───────────────────────────────────────────
 export default function EOIAnalysis() {
   // Filters
   const [yearFilter, setYearFilter] = useState<number | null>(null);
@@ -96,46 +59,48 @@ export default function EOIAnalysis() {
   const [occupations, setOccupations] = useState<any[]>([]);
   const [points, setPoints] = useState<any[]>([]);
 
-  // Loading
+  // Loading states
   const [loadingSummary, setLoadingSummary] = useState(true);
-  const [loadingMonthly, setLoadingMonthly] = useState(true);
   const [loadingOcc, setLoadingOcc] = useState(true);
   const [loadingPoints, setLoadingPoints] = useState(true);
 
-  // ── Load summary once ──────────────────────────────────────
+  // Summary + monthly — once only
   useEffect(() => {
-    setLoadingSummary(true);
-    fetchSummary()
-      .then((d) => setSummary(d))
+    fetch(`${API}/api/data/summary`)
+      .then((r) => r.json())
+      .then(setSummary)
       .finally(() => setLoadingSummary(false));
+    fetch(`${API}/api/data/eoi/monthly`)
+      .then((r) => r.json())
+      .then((d) => setMonthly(d.records || []));
   }, []);
 
-  // ── Load monthly trend once ────────────────────────────────
-  useEffect(() => {
-    setLoadingMonthly(true);
-    fetchMonthly()
-      .then((d) => setMonthly(d.records || []))
-      .finally(() => setLoadingMonthly(false));
-  }, []);
-
-  // ── Reload occupations when filters change ─────────────────
+  // Occupations — refetch when year, state, visa, limit changes
   useEffect(() => {
     setLoadingOcc(true);
-    fetchOccupations(yearFilter, stateFilter, occLimit)
+    const p = new URLSearchParams({ limit: String(occLimit) });
+    if (yearFilter) p.append("year", String(yearFilter));
+    if (stateFilter) p.append("state", stateFilter);
+    if (visaFilter) p.append("visa_type", visaFilter);
+    fetch(`${API}/api/data/eoi/occupations?${p}`)
+      .then((r) => r.json())
       .then((d) => setOccupations(d.records || []))
       .finally(() => setLoadingOcc(false));
-  }, [yearFilter, stateFilter, occLimit]);
+  }, [yearFilter, stateFilter, visaFilter, occLimit]);
 
-  // ── Reload points when filters change ─────────────────────
+  // Points distribution — refetch when visa, state changes
   useEffect(() => {
     setLoadingPoints(true);
-    fetchPoints(visaFilter, stateFilter)
+    const p = new URLSearchParams();
+    if (visaFilter) p.append("visa_type", visaFilter);
+    if (stateFilter) p.append("state", stateFilter);
+    fetch(`${API}/api/data/eoi/points?${p}`)
+      .then((r) => r.json())
       .then((d) => setPoints(d.records || []))
       .finally(() => setLoadingPoints(false));
   }, [visaFilter, stateFilter]);
 
-  // ── Derived data ───────────────────────────────────────────
-  // Points pivot: { points, SUBMITTED, INVITED }
+  // Pivot points → { points, SUBMITTED, INVITED }
   const pointsPivot = (() => {
     const map: Record<number, any> = {};
     for (const r of points) {
@@ -146,10 +111,8 @@ export default function EOIAnalysis() {
     return Object.values(map).sort((a, b) => a.points - b.points);
   })();
 
-  // Monthly — last 12 months only for readability
   const monthlyLast12 = monthly.slice(-12);
 
-  // Filter occupations by search
   const filteredOcc = occupations.filter(
     (o) =>
       !searchOcc ||
@@ -157,12 +120,14 @@ export default function EOIAnalysis() {
       o.anzsco_code.includes(searchOcc),
   );
 
+  const hasFilter = yearFilter || stateFilter || visaFilter;
+
   return (
     <PageWrapper
       title="EOI Analysis"
-      sub={`SkillSelect data · ${summary?.latest_snapshot || "loading..."} · ${fmt(summary?.eoi_pool)} active pool · real data from warehouse.db`}
+      sub={`SkillSelect data · snapshot ${summary?.latest_snapshot || "..."} · ${fmt(summary?.eoi_pool)} active pool`}
     >
-      {/* ── Filters bar ────────────────────────────────────── */}
+      {/* ── Filter bar ─────────────────────────────────────── */}
       <div
         style={{
           display: "flex",
@@ -195,8 +160,10 @@ export default function EOIAnalysis() {
           onChange={(e) => setStateFilter(e.target.value)}
         >
           <option value="">All States</option>
-          {STATES.filter(Boolean).map((s) => (
-            <option key={s}>{s}</option>
+          {STATES.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
           ))}
         </select>
 
@@ -206,12 +173,13 @@ export default function EOIAnalysis() {
           onChange={(e) => setVisaFilter(e.target.value)}
         >
           <option value="">All Visa Types</option>
-          {VISA_TYPES.filter(Boolean).map((v) => (
-            <option key={v}>Visa {v}</option>
-          ))}
+          <option value="190">Visa 190</option>
+          <option value="491">Visa 491</option>
+          <option value="189">Visa 189</option>
+          <option value="188">Visa 188</option>
         </select>
 
-        {(yearFilter || stateFilter || visaFilter) && (
+        {hasFilter && (
           <button
             onClick={() => {
               setYearFilter(null);
@@ -232,7 +200,6 @@ export default function EOIAnalysis() {
             ✕ Clear Filters
           </button>
         )}
-
         <span style={{ marginLeft: "auto", fontSize: 11, color: C.muted }}>
           {summary?.latest_snapshot &&
             `Latest snapshot: ${summary.latest_snapshot}`}
@@ -244,13 +211,13 @@ export default function EOIAnalysis() {
         <KPICard
           label="Active EOI Pool"
           value={loadingSummary ? "..." : fmt(summary?.eoi_pool)}
-          sub="SUBMITTED status"
+          sub="Submitted — latest snapshot"
           color={C.blue}
         />
         <KPICard
           label="Total Invitations"
           value={loadingSummary ? "..." : fmt(summary?.total_invitations)}
-          sub="INVITED status"
+          sub="Invited — latest snapshot"
           color={C.green}
         />
         <KPICard
@@ -267,71 +234,67 @@ export default function EOIAnalysis() {
         />
       </div>
 
-      {/* ── Monthly trend chart ─────────────────────────────── */}
+      {/* ── Charts ─────────────────────────────────────────── */}
       <div style={Grid.two}>
+        {/* Monthly trend */}
         <Card>
           <ChartHeader color={C.blue}>
-            EOI Pool & Invitations — Monthly Trend
+            EOI Pool & Invitations — Last 12 Months
           </ChartHeader>
-          {loadingMonthly ? (
-            <div
-              style={{
-                height: 220,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: C.muted,
-                fontSize: 12,
-              }}
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart
+              data={monthlyLast12}
+              margin={{ top: 4, right: 10, bottom: 0, left: -10 }}
             >
-              Loading...
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart
-                data={monthlyLast12}
-                margin={{ top: 4, right: 10, bottom: 0, left: -10 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                <XAxis
-                  dataKey="month"
-                  tick={{ fill: C.muted, fontSize: 10 }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  tick={{ fill: C.muted, fontSize: 10 }}
-                  axisLine={false}
-                  tickLine={false}
-                  tickFormatter={(v) => (v / 1000).toFixed(0) + "k"}
-                />
-                <Tooltip content={<ChartTip />} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Line
-                  type="monotone"
-                  dataKey="pool"
-                  name="EOI Pool"
-                  stroke={C.blue}
-                  strokeWidth={2}
-                  dot={false}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="invitations"
-                  name="Invitations"
-                  stroke={C.green}
-                  strokeWidth={2}
-                  dot={{ r: 3, fill: C.green }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
+              <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+              <XAxis
+                dataKey="month"
+                tick={{ fill: C.muted, fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                tick={{ fill: C.muted, fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={(v) => (v / 1000).toFixed(0) + "k"}
+              />
+              <Tooltip content={<ChartTip />} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Line
+                type="monotone"
+                dataKey="pool"
+                name="EOI Pool"
+                stroke={C.blue}
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="invitations"
+                name="Invitations"
+                stroke={C.green}
+                strokeWidth={2}
+                dot={{ r: 3, fill: C.green }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
         </Card>
 
-        {/* ── Points distribution ─────────────────────────── */}
+        {/* Points distribution */}
         <Card>
           <ChartHeader color={C.amber}>
             Points Distribution — Submitted vs Invited
+            {visaFilter && (
+              <span style={{ fontSize: 10, color: C.muted, marginLeft: 8 }}>
+                Visa {visaFilter}
+              </span>
+            )}
+            {stateFilter && (
+              <span style={{ fontSize: 10, color: C.muted, marginLeft: 4 }}>
+                {stateFilter}
+              </span>
+            )}
           </ChartHeader>
           {loadingPoints ? (
             <div
@@ -399,7 +362,7 @@ export default function EOIAnalysis() {
         </Card>
       </div>
 
-      {/* ── Top Occupations table ───────────────────────────── */}
+      {/* ── Occupations table ──────────────────────────────── */}
       <Card>
         <div
           style={{
@@ -420,20 +383,21 @@ export default function EOIAnalysis() {
                 marginBottom: 2,
               }}
             >
-              Top Occupations by EOI Activity
+              Occupations by EOI Activity
             </p>
             <p style={{ fontSize: 11, color: C.muted }}>
               {loadingOcc ? "Loading..." : `${filteredOcc.length} occupations`}
               {yearFilter && ` · ${yearFilter}`}
               {stateFilter && ` · ${stateFilter}`}
+              {visaFilter && ` · Visa ${visaFilter}`}
             </p>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <input
               value={searchOcc}
               onChange={(e) => setSearchOcc(e.target.value)}
-              placeholder="Search occupation or ANZSCO..."
-              style={{ ...selectStyle, width: 240 }}
+              placeholder="Search name or ANZSCO..."
+              style={{ ...selectStyle, width: 230 }}
             />
             <select
               style={selectStyle}
@@ -447,11 +411,11 @@ export default function EOIAnalysis() {
           </div>
         </div>
 
-        {/* Table header */}
+        {/* Header */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "2fr 0.8fr 0.8fr 1fr 1fr 1fr 0.8fr",
+            gridTemplateColumns: "2fr 0.8fr 0.8fr 1fr 1fr 1.2fr 0.8fr",
             gap: 8,
             padding: "7px 14px",
             marginBottom: 2,
@@ -470,7 +434,7 @@ export default function EOIAnalysis() {
               key={h}
               style={{
                 fontSize: 10,
-                color: C.dimmed,
+                color: C.muted,
                 fontWeight: 700,
                 textTransform: "uppercase",
                 letterSpacing: "0.07em",
@@ -481,7 +445,7 @@ export default function EOIAnalysis() {
           ))}
         </div>
 
-        {/* Table rows */}
+        {/* Rows */}
         {loadingOcc ? (
           <div
             style={{
@@ -502,17 +466,17 @@ export default function EOIAnalysis() {
               fontSize: 12,
             }}
           >
-            No data found — try adjusting filters
+            No results — try adjusting filters
           </div>
         ) : (
           filteredOcc.map((o, i) => {
-            const invRate = o.invitation_rate;
+            const rate = o.invitation_rate;
             const rateColor =
-              invRate >= 0.5
+              rate >= 0.5
                 ? C.green
-                : invRate >= 0.2
+                : rate >= 0.2
                   ? C.blue
-                  : invRate > 0
+                  : rate > 0
                     ? C.amber
                     : C.muted;
             return (
@@ -520,7 +484,7 @@ export default function EOIAnalysis() {
                 key={`${o.anzsco_code}-${i}`}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "2fr 0.8fr 0.8fr 1fr 1fr 1fr 0.8fr",
+                  gridTemplateColumns: "2fr 0.8fr 0.8fr 1fr 1fr 1.2fr 0.8fr",
                   gap: 8,
                   padding: "9px 14px",
                   borderRadius: 6,
@@ -541,17 +505,17 @@ export default function EOIAnalysis() {
                   {o.anzsco_code || "—"}
                 </span>
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                  {(o.visa_types?.length > 0 ? o.visa_types : [o.visa_type])
-                    .filter(Boolean)
-                    .map((v: string) => (
+                  {(o.visa_types?.length > 0 ? o.visa_types : []).map(
+                    (v: string) => (
                       <Badge
                         key={v}
-                        label={`${v}`}
+                        label={v}
                         color={
                           v === "190" ? C.blue : v === "491" ? C.purple : C.cyan
                         }
                       />
-                    ))}
+                    ),
+                  )}
                 </div>
                 <span style={{ fontSize: 12, color: C.text }}>
                   {fmt(o.pool)}
@@ -560,6 +524,7 @@ export default function EOIAnalysis() {
                   style={{
                     fontSize: 12,
                     color: o.invitations > 0 ? C.green : C.muted,
+                    fontWeight: o.invitations > 0 ? 600 : 400,
                   }}
                 >
                   {fmt(o.invitations)}
@@ -575,7 +540,7 @@ export default function EOIAnalysis() {
                   >
                     <div
                       style={{
-                        width: `${Math.min(invRate * 100, 100)}%`,
+                        width: `${Math.min(rate * 100, 100)}%`,
                         height: "100%",
                         background: rateColor,
                         borderRadius: 2,
@@ -590,12 +555,12 @@ export default function EOIAnalysis() {
                       textAlign: "right",
                     }}
                   >
-                    {invRate > 0 ? `${(invRate * 100).toFixed(0)}%` : "0%"}
+                    {rate > 0 ? `${(rate * 100).toFixed(0)}%` : "0%"}
                   </span>
                 </div>
                 <span style={{ fontSize: 11, color: C.muted }}>
                   {o.min_invited_points > 0
-                    ? `${o.min_invited_points}–${o.max_invited_points}`
+                    ? `${o.min_invited_points}–${o.max_invited_points} pts`
                     : "—"}
                 </span>
               </div>

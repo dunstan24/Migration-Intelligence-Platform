@@ -1,12 +1,12 @@
 "use client";
 /**
  * Global Overview Dashboard
- * Fetches real EOI data from:
- *   GET /api/data/summary
- *   GET /api/data/eoi/monthly
- *   GET /api/data/eoi/occupations
+ * GET /api/data/summary           → KPIs (latest snapshot, no filter)
+ * GET /api/data/eoi/monthly       → pool + invitations trend (all time, no filter)
+ * GET /api/data/eoi/occupations   → top occupations (year, state, visa_type filters → API)
+ * GET /api/data/quota             → quota allocation
  */
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   AreaChart,
@@ -23,21 +23,6 @@ import {
 import { C, Card, ChartTip, Badge } from "@/components/ui";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
-
-// ── Types ─────────────────────────────────────────────────────
-type Occupation = {
-  anzsco_code: string;
-  occupation_name: string;
-  pool: number;
-  invitations: number;
-  invitation_rate: number;
-  max_invited_points: number;
-  min_invited_points: number;
-  visa_types: string[];
-  states: number;
-};
-
-// ── Helpers ───────────────────────────────────────────────────
 const fmt = (n: number) => n?.toLocaleString() ?? "—";
 const fmtK = (n: number) =>
   n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
@@ -65,7 +50,6 @@ function InvBar({ rate }: { rate: number }) {
             height: "100%",
             background: color,
             borderRadius: 2,
-            transition: "width 0.4s ease",
           }}
         />
       </div>
@@ -137,14 +121,13 @@ function KPI({ label, value, sub, color, icon }: any) {
   );
 }
 
-// ── Main ──────────────────────────────────────────────────────
 export default function GlobalOverview() {
   const router = useRouter();
 
-  // Filters
-  const [visaFilter, setVisaFilter] = useState("");
-  const [stateFilter, setStateFilter] = useState("");
+  // Filters — all three sent to API
   const [yearFilter, setYearFilter] = useState<number | null>(null);
+  const [stateFilter, setStateFilter] = useState("");
+  const [visaFilter, setVisaFilter] = useState("");
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"pool" | "invitations" | "rate">(
     "invitations",
@@ -154,12 +137,12 @@ export default function GlobalOverview() {
   // Data
   const [summary, setSummary] = useState<any>(null);
   const [monthly, setMonthly] = useState<any[]>([]);
-  const [occs, setOccs] = useState<Occupation[]>([]);
+  const [occs, setOccs] = useState<any[]>([]);
   const [quota, setQuota] = useState<any>(null);
   const [loadingOccs, setLoadingOccs] = useState(true);
   const [loadingSummary, setLoadingSummary] = useState(true);
 
-  // ── Fetch summary + monthly + quota once ─────────────────
+  // Summary, monthly, quota — once
   useEffect(() => {
     fetch(`${API}/api/data/summary`)
       .then((r) => r.json())
@@ -173,38 +156,49 @@ export default function GlobalOverview() {
       .then(setQuota);
   }, []);
 
-  // ── Fetch occupations on filter change ────────────────────
+  // Occupations — refetch when any filter changes (all sent to API)
   useEffect(() => {
     setLoadingOccs(true);
     const p = new URLSearchParams({ limit: String(limit) });
     if (yearFilter) p.append("year", String(yearFilter));
     if (stateFilter) p.append("state", stateFilter);
+    if (visaFilter) p.append("visa_type", visaFilter);
     fetch(`${API}/api/data/eoi/occupations?${p}`)
       .then((r) => r.json())
       .then((d) => setOccs(d.records || []))
       .finally(() => setLoadingOccs(false));
-  }, [yearFilter, stateFilter, limit]);
+  }, [yearFilter, stateFilter, visaFilter, limit]);
 
-  // ── Client-side filter + sort ─────────────────────────────
+  // Client-side: search + sort only
   const filtered = occs
-    .filter((o) => {
-      if (visaFilter && !o.visa_types?.includes(visaFilter)) return false;
-      if (
-        search &&
-        !o.occupation_name.toLowerCase().includes(search.toLowerCase()) &&
-        !o.anzsco_code.includes(search)
-      )
-        return false;
-      return true;
-    })
+    .filter(
+      (o) =>
+        !search ||
+        o.occupation_name.toLowerCase().includes(search.toLowerCase()) ||
+        o.anzsco_code.includes(search),
+    )
     .sort((a, b) => {
       if (sortBy === "pool") return b.pool - a.pool;
       if (sortBy === "invitations") return b.invitations - a.invitations;
       return b.invitation_rate - a.invitation_rate;
     });
 
-  // Monthly last 12
   const monthlyChart = monthly.slice(-12);
+
+  // Visa breakdown from occupations (reflects current filters)
+  const visaMap: Record<string, { pool: number; inv: number }> = {};
+  for (const o of occs) {
+    for (const v of o.visa_types || []) {
+      if (!visaMap[v]) visaMap[v] = { pool: 0, inv: 0 };
+      visaMap[v].pool += o.pool;
+      visaMap[v].inv += o.invitations;
+    }
+  }
+  const visaChartData = Object.entries(visaMap).map(([visa, d]) => ({
+    visa: `Visa ${visa}`,
+    pool: d.pool,
+    inv: d.inv,
+  }));
 
   const selectStyle = {
     background: C.bg,
@@ -217,6 +211,8 @@ export default function GlobalOverview() {
     cursor: "pointer",
   };
 
+  const hasFilter = yearFilter || stateFilter || visaFilter;
+
   return (
     <div
       style={{
@@ -226,7 +222,7 @@ export default function GlobalOverview() {
         minHeight: "100vh",
       }}
     >
-      {/* ── Header ──────────────────────────────────────────── */}
+      {/* Header */}
       <div
         style={{
           marginBottom: 20,
@@ -244,7 +240,6 @@ export default function GlobalOverview() {
               fontWeight: 800,
               color: "#f9fafb",
               marginBottom: 3,
-              letterSpacing: "-0.3px",
             }}
           >
             Migration Intelligence
@@ -263,6 +258,27 @@ export default function GlobalOverview() {
             flexWrap: "wrap",
           }}
         >
+          {hasFilter && (
+            <button
+              onClick={() => {
+                setYearFilter(null);
+                setStateFilter("");
+                setVisaFilter("");
+              }}
+              style={{
+                padding: "7px 12px",
+                borderRadius: 6,
+                border: `1px solid ${C.red}40`,
+                background: `${C.red}15`,
+                color: C.red,
+                fontSize: 11,
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              ✕ Clear
+            </button>
+          )}
           <span style={{ fontSize: 11, color: C.muted }}>Year:</span>
           <select
             style={selectStyle}
@@ -284,7 +300,9 @@ export default function GlobalOverview() {
           >
             <option value="">All States</option>
             {STATES.map((s) => (
-              <option key={s}>{s}</option>
+              <option key={s} value={s}>
+                {s}
+              </option>
             ))}
           </select>
           <span style={{ fontSize: 11, color: C.muted }}>Visa:</span>
@@ -301,7 +319,7 @@ export default function GlobalOverview() {
         </div>
       </div>
 
-      {/* ── KPI Row ─────────────────────────────────────────── */}
+      {/* KPI Row — always latest snapshot, never affected by filters */}
       <div
         style={{
           display: "grid",
@@ -313,7 +331,7 @@ export default function GlobalOverview() {
         <KPI
           label="Active EOI Pool"
           value={loadingSummary ? "..." : fmt(summary?.eoi_pool || 0)}
-          sub="SUBMITTED status"
+          sub="Latest snapshot"
           color={C.blue}
           icon="📋"
         />
@@ -334,7 +352,7 @@ export default function GlobalOverview() {
         <KPI
           label="Total Invitations"
           value={loadingSummary ? "..." : fmt(summary?.total_invitations || 0)}
-          sub="INVITED status"
+          sub="Latest snapshot"
           color={C.green}
           icon="✉️"
         />
@@ -356,7 +374,7 @@ export default function GlobalOverview() {
         />
       </div>
 
-      {/* ── Charts Row ──────────────────────────────────────── */}
+      {/* Charts Row */}
       <div
         style={{
           display: "grid",
@@ -365,7 +383,7 @@ export default function GlobalOverview() {
           marginBottom: 20,
         }}
       >
-        {/* Monthly trend */}
+        {/* Monthly trend — all time, no filter */}
         <Card>
           <p
             style={{
@@ -387,7 +405,7 @@ export default function GlobalOverview() {
                 display: "inline-block",
               }}
             />
-            EOI Pool & Invitations — Monthly
+            EOI Pool & Invitations — Last 12 Months
           </p>
           <ResponsiveContainer width="100%" height={180}>
             <AreaChart
@@ -442,7 +460,7 @@ export default function GlobalOverview() {
           </ResponsiveContainer>
         </Card>
 
-        {/* Visa breakdown */}
+        {/* Visa breakdown — reflects current filters via occupations query */}
         <Card>
           <p
             style={{
@@ -465,62 +483,51 @@ export default function GlobalOverview() {
               }}
             />
             Visa Type Breakdown
+            {hasFilter && (
+              <span style={{ fontSize: 10, color: C.muted, marginLeft: 4 }}>
+                (filtered)
+              </span>
+            )}
           </p>
-          {(() => {
-            const visaMap: Record<string, { pool: number; inv: number }> = {};
-            for (const o of occs) {
-              for (const v of o.visa_types || []) {
-                if (!visaMap[v]) visaMap[v] = { pool: 0, inv: 0 };
-                visaMap[v].pool += o.pool;
-                visaMap[v].inv += o.invitations;
-              }
-            }
-            const data = Object.entries(visaMap).map(([visa, d]) => ({
-              visa: `Visa ${visa}`,
-              ...d,
-            }));
-            return (
-              <ResponsiveContainer width="100%" height={180}>
-                <BarChart
-                  data={data}
-                  margin={{ top: 4, right: 8, bottom: 0, left: -15 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                  <XAxis
-                    dataKey="visa"
-                    tick={{ fill: C.muted, fontSize: 10 }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    tick={{ fill: C.muted, fontSize: 9 }}
-                    axisLine={false}
-                    tickLine={false}
-                    tickFormatter={(v) => (v / 1000000).toFixed(1) + "M"}
-                  />
-                  <Tooltip content={<ChartTip />} />
-                  <Legend wrapperStyle={{ fontSize: 10 }} />
-                  <Bar
-                    dataKey="pool"
-                    name="Pool"
-                    fill={C.blue}
-                    fillOpacity={0.6}
-                    radius={[3, 3, 0, 0]}
-                  />
-                  <Bar
-                    dataKey="inv"
-                    name="Invitations"
-                    fill={C.green}
-                    radius={[3, 3, 0, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            );
-          })()}
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart
+              data={visaChartData}
+              margin={{ top: 4, right: 8, bottom: 0, left: -15 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+              <XAxis
+                dataKey="visa"
+                tick={{ fill: C.muted, fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                tick={{ fill: C.muted, fontSize: 9 }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={(v) => (v / 1000).toFixed(0) + "k"}
+              />
+              <Tooltip content={<ChartTip />} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              <Bar
+                dataKey="pool"
+                name="Pool"
+                fill={C.blue}
+                fillOpacity={0.6}
+                radius={[3, 3, 0, 0]}
+              />
+              <Bar
+                dataKey="inv"
+                name="Invitations"
+                fill={C.green}
+                radius={[3, 3, 0, 0]}
+              />
+            </BarChart>
+          </ResponsiveContainer>
         </Card>
       </div>
 
-      {/* ── Quota Section ───────────────────────────────────── */}
+      {/* Quota Charts */}
       {quota && (
         <div
           style={{
@@ -530,7 +537,6 @@ export default function GlobalOverview() {
             marginBottom: 20,
           }}
         >
-          {/* State allocation bar chart */}
           <Card>
             <p
               style={{
@@ -552,7 +558,7 @@ export default function GlobalOverview() {
                   display: "inline-block",
                 }}
               />
-              State Nomination Allocation 2024–25
+              State Nomination Allocation — {quota.latest_year}
             </p>
             <ResponsiveContainer width="100%" height={180}>
               <BarChart
@@ -589,7 +595,6 @@ export default function GlobalOverview() {
             </ResponsiveContainer>
           </Card>
 
-          {/* National planning levels */}
           <Card>
             <p
               style={{
@@ -637,21 +642,18 @@ export default function GlobalOverview() {
                   dataKey="employer_sponsored"
                   name="Employer Sponsored"
                   fill={C.blue}
-                  radius={[0, 0, 0, 0]}
                   stackId="a"
                 />
                 <Bar
                   dataKey="skilled_independent"
                   name="Skilled Independent"
                   fill={C.green}
-                  radius={[0, 0, 0, 0]}
                   stackId="a"
                 />
                 <Bar
                   dataKey="regional"
                   name="Regional"
                   fill={C.purple}
-                  radius={[0, 0, 0, 0]}
                   stackId="a"
                 />
                 <Bar
@@ -667,9 +669,8 @@ export default function GlobalOverview() {
         </div>
       )}
 
-      {/* ── Occupation Table ─────────────────────────────────── */}
+      {/* Occupation Table */}
       <Card style={{ padding: 0 }}>
-        {/* Table header bar */}
         <div
           style={{
             padding: "16px 20px",
@@ -685,11 +686,10 @@ export default function GlobalOverview() {
               All Occupations
             </p>
             <p style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>
-              {loadingOccs
-                ? "Loading..."
-                : `${filtered.length.toLocaleString()} occupations`}
-              {visaFilter && ` · Visa ${visaFilter}`}
+              {loadingOccs ? "Loading..." : `${filtered.length} occupations`}
+              {yearFilter && ` · ${yearFilter}`}
               {stateFilter && ` · ${stateFilter}`}
+              {visaFilter && ` · Visa ${visaFilter}`}
             </p>
           </div>
           <div
@@ -704,7 +704,16 @@ export default function GlobalOverview() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="🔍  Search occupation or ANZSCO..."
-              style={{ ...selectStyle, width: 260 }}
+              style={{
+                background: C.bg,
+                border: `1px solid ${C.border}`,
+                borderRadius: 6,
+                padding: "7px 12px",
+                color: C.text,
+                fontSize: 12,
+                outline: "none",
+                width: 260,
+              }}
             />
             <select
               style={selectStyle}
@@ -800,7 +809,6 @@ export default function GlobalOverview() {
                   alignItems: "center",
                   background: i % 2 === 0 ? "transparent" : "#090d14",
                   cursor: "pointer",
-                  transition: "background 0.15s",
                   borderBottom: `1px solid ${C.border}22`,
                 }}
                 onMouseEnter={(e) =>
@@ -811,14 +819,9 @@ export default function GlobalOverview() {
                     i % 2 === 0 ? "transparent" : "#090d14")
                 }
               >
-                {/* Occupation name */}
-                <div>
-                  <p style={{ fontSize: 12, color: C.text, fontWeight: 500 }}>
-                    {o.occupation_name}
-                  </p>
-                </div>
-
-                {/* ANZSCO */}
+                <p style={{ fontSize: 12, color: C.text, fontWeight: 500 }}>
+                  {o.occupation_name}
+                </p>
                 <span
                   style={{
                     fontSize: 11,
@@ -828,10 +831,8 @@ export default function GlobalOverview() {
                 >
                   {o.anzsco_code || "—"}
                 </span>
-
-                {/* Visa badges */}
                 <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
-                  {(o.visa_types || []).map((v) => (
+                  {(o.visa_types || []).map((v: string) => (
                     <span
                       key={v}
                       style={{
@@ -848,13 +849,9 @@ export default function GlobalOverview() {
                     </span>
                   ))}
                 </div>
-
-                {/* Pool */}
                 <span style={{ fontSize: 12, color: C.text }}>
                   {fmt(o.pool)}
                 </span>
-
-                {/* Invitations */}
                 <span
                   style={{
                     fontSize: 12,
@@ -864,11 +861,7 @@ export default function GlobalOverview() {
                 >
                   {fmt(o.invitations)}
                 </span>
-
-                {/* Inv rate bar */}
                 <InvBar rate={o.invitation_rate} />
-
-                {/* Points range */}
                 <span style={{ fontSize: 11, color: C.muted }}>
                   {o.min_invited_points > 0
                     ? `${o.min_invited_points}–${o.max_invited_points} pts`
@@ -879,7 +872,6 @@ export default function GlobalOverview() {
           )}
         </div>
 
-        {/* Footer */}
         <div
           style={{
             padding: "10px 20px",

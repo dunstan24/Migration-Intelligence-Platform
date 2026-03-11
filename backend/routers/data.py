@@ -63,12 +63,13 @@ async def get_summary(db: AsyncSession = Depends(get_db)):
         """), {"month": latest_month})
         points_cutoff = int(cutoff.scalar() or 0)
 
-        # Unique occupations in pool
+        # Unique occupations in latest snapshot (filter by month for speed)
         occ_count = await db.execute(text("""
             SELECT COUNT(DISTINCT anzsco_code)
             FROM eoi_records
             WHERE anzsco_code != ''
-        """))
+            AND as_at_str = :month
+        """), {"month": latest_month})
         shortage_occupations = int(occ_count.scalar() or 0)
 
         data = {
@@ -337,13 +338,14 @@ async def get_eoi_monthly(db: AsyncSession = Depends(get_db)):
 # ── /api/data/eoi/occupations ─────────────────────────────────
 @router.get("/eoi/occupations")
 async def get_eoi_occupations(
-    year:  int = Query(None),
-    state: str = Query(None),
-    limit: int = Query(50),
+    year:      int = Query(None),
+    state:     str = Query(None),
+    visa_type: str = Query(None),
+    limit:     int = Query(50),
     db: AsyncSession = Depends(get_db)
 ):
     """Top occupations by EOI pool size + invitation rate."""
-    cache_key = f"data:eoi:occupations:{year}:{state}:{limit}"
+    cache_key = f"data:eoi:occupations:{year}:{state}:{visa_type}:{limit}"
     cached = await get_cache(cache_key)
     if cached:
         return JSONResponse(json.loads(cached))
@@ -351,12 +353,35 @@ async def get_eoi_occupations(
     try:
         conditions = []
         params = {"limit": limit}
+
         if year:
-            conditions.append("as_at_year = :year")
-            params["year"] = year
+            # Use only the LATEST snapshot month within that year — avoids summing multiple monthly snapshots
+            latest_in_year_q = await db.execute(text(
+                "SELECT as_at_str FROM eoi_records WHERE as_at_year = :yr ORDER BY as_at_month_no DESC LIMIT 1"
+            ), {"yr": year})
+            row = latest_in_year_q.fetchone()
+            if row:
+                conditions.append("as_at_str = :snapshot_month")
+                params["snapshot_month"] = row[0]
+            else:
+                conditions.append("as_at_year = :year")
+                params["year"] = year
+        else:
+            # No year filter — use global latest snapshot month
+            latest_q = await db.execute(text(
+                "SELECT as_at_str FROM eoi_records ORDER BY as_at_year DESC, as_at_month_no DESC LIMIT 1"
+            ))
+            latest_row = latest_q.fetchone()
+            if latest_row:
+                conditions.append("as_at_str = :latest_month")
+                params["latest_month"] = latest_row[0]
+
         if state:
             conditions.append("state = :state")
             params["state"] = state.upper()
+        if visa_type:
+            conditions.append("visa_type = :visa_type")
+            params["visa_type"] = visa_type
         where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
         result = await db.execute(text(f"""
@@ -422,6 +447,16 @@ async def get_eoi_points(
     try:
         conditions = ["eoi_status IN ('SUBMITTED','INVITED')"]
         params = {}
+
+        # Default to latest snapshot month — prevents scanning all historical data
+        latest_q = await db.execute(text(
+            "SELECT as_at_str FROM eoi_records ORDER BY as_at_year DESC, as_at_month_no DESC LIMIT 1"
+        ))
+        latest_row = latest_q.fetchone()
+        if latest_row:
+            conditions.append("as_at_str = :latest_month")
+            params["latest_month"] = latest_row[0]
+
         if occupation:
             conditions.append("anzsco_code = :occupation")
             params["occupation"] = occupation
@@ -921,13 +956,32 @@ async def get_occupation_detail(anzsco: str, db: AsyncSession = Depends(get_db))
         return JSONResponse(json.loads(cached))
 
     try:
-        info = await db.execute(text("""
+        # Get latest 12 snapshot months for this occupation
+        latest_months_q = await db.execute(text("""
+            SELECT DISTINCT as_at_str, as_at_year, as_at_month_no
+            FROM eoi_records
+            WHERE anzsco_code = :anzsco
+            ORDER BY as_at_year DESC, as_at_month_no DESC
+            LIMIT 12
+        """), {"anzsco": anzsco})
+        latest_months_rows = latest_months_q.fetchall()
+        if not latest_months_rows:
+            return {"error": "Occupation not found", "anzsco": anzsco}
+
+        # Tuple of latest 12 snapshot strings e.g. ('03/2026','02/2026',...)
+        latest_12 = tuple(r[0] for r in latest_months_rows)
+        # SQLite IN clause placeholder
+        placeholders = ",".join(f":m{i}" for i in range(len(latest_12)))
+        month_params = {f"m{i}": v for i, v in enumerate(latest_12)}
+
+        info = await db.execute(text(f"""
             SELECT anzsco_code, occupation_name, visa_type,
                    COUNT(DISTINCT state) as state_count
             FROM eoi_records
             WHERE anzsco_code = :anzsco
+            AND as_at_str IN ({placeholders})
             GROUP BY anzsco_code, occupation_name, visa_type
-        """), {"anzsco": anzsco})
+        """), {"anzsco": anzsco, **month_params})
         info_rows = info.fetchall()
         if not info_rows:
             return {"error": "Occupation not found", "anzsco": anzsco}
@@ -935,26 +989,31 @@ async def get_occupation_detail(anzsco: str, db: AsyncSession = Depends(get_db))
         occupation_name = info_rows[0][1]
         visa_types = list(set(r[2] for r in info_rows))
 
-        # EOI summary by status
-        eoi = await db.execute(text("""
+        # EOI summary by status — latest 12 months only
+        eoi = await db.execute(text(f"""
             SELECT eoi_status,
                    SUM(CASE WHEN count_eois = -1 THEN 10 ELSE count_eois END) as total,
                    MIN(points) as min_pts, MAX(points) as max_pts, AVG(points) as avg_pts
-            FROM eoi_records WHERE anzsco_code = :anzsco GROUP BY eoi_status
-        """), {"anzsco": anzsco})
+            FROM eoi_records
+            WHERE anzsco_code = :anzsco
+            AND as_at_str IN ({placeholders})
+            GROUP BY eoi_status
+        """), {"anzsco": anzsco, **month_params})
         eoi_rows = eoi.fetchall()
         eoi_summary = {r[0]: {"total": int(r[1] or 0), "min_pts": r[2], "max_pts": r[3], "avg_pts": round(r[4] or 0, 1)} for r in eoi_rows}
 
-        # State breakdown
-        states = await db.execute(text("""
+        # State breakdown — latest 12 months only
+        states = await db.execute(text(f"""
             SELECT state, visa_type,
                    SUM(CASE WHEN eoi_status='SUBMITTED' AND count_eois=-1 THEN 10 WHEN eoi_status='SUBMITTED' THEN count_eois ELSE 0 END) as pool,
                    SUM(CASE WHEN eoi_status='INVITED' AND count_eois=-1 THEN 10 WHEN eoi_status='INVITED' THEN count_eois ELSE 0 END) as invitations,
                    MAX(CASE WHEN eoi_status='INVITED' THEN points ELSE 0 END) as max_inv_pts,
                    MIN(CASE WHEN eoi_status='INVITED' THEN points ELSE NULL END) as min_inv_pts
-            FROM eoi_records WHERE anzsco_code = :anzsco
+            FROM eoi_records
+            WHERE anzsco_code = :anzsco
+            AND as_at_str IN ({placeholders})
             GROUP BY state, visa_type ORDER BY invitations DESC, pool DESC
-        """), {"anzsco": anzsco})
+        """), {"anzsco": anzsco, **month_params})
         state_rows = states.fetchall()
         state_breakdown = [
             {"state": r[0], "visa_type": r[1], "pool": int(r[2] or 0), "invitations": int(r[3] or 0),

@@ -210,7 +210,13 @@ export default function OccupationDetail() {
           ? C.amber
           : C.red;
   const eoisub = data.eoi_summary || {};
-  const openStates = (data.state_breakdown || []).filter((s: any) => s.is_open);
+  // Deduplicate by state name before counting — state_breakdown has one row per state+visa_type
+  const uniqueStates = Array.from(
+    new Map(
+      (data.state_breakdown || []).map((s: any) => [s.state, s]),
+    ).values(),
+  );
+  const openStates = uniqueStates.filter((s: any) => s.is_open);
   const shortage = data.shortage_data?.[0];
   const shortageStyle = shortage
     ? SHORTAGE_LABEL[shortage.rating] || {
@@ -435,13 +441,13 @@ export default function OccupationDetail() {
         <StatBox
           label="EOI Pool"
           value={fmt(data.pool_total)}
-          sub="Submitted"
+          sub="Last 12 months"
           color={C.blue}
         />
         <StatBox
           label="Invitations"
           value={fmt(data.invitations_total)}
-          sub="Invited"
+          sub="Last 12 months"
           color={C.green}
         />
         <StatBox
@@ -1384,7 +1390,7 @@ export default function OccupationDetail() {
         >
           <Card>
             <SectionHeader
-              title="Employment Growth Projection"
+              title="Employment Growth Projection (JSA)"
               color={C.green}
             />
             {data.employment_projection?.length > 0 ? (
@@ -1465,7 +1471,7 @@ export default function OccupationDetail() {
           </Card>
 
           <Card>
-            <SectionHeader title="Shortage Assessment" color={C.red} />
+            <SectionHeader title="JSA Shortage Assessment" color={C.red} />
             {data.shortage_data?.length > 0 ? (
               data.shortage_data.map((s: any) => {
                 const ss = SHORTAGE_LABEL[s.rating] || {
@@ -1533,44 +1539,158 @@ export default function OccupationDetail() {
             ) : (
               <NoData label="No shortage data" />
             )}
+          </Card>
 
-            {(proj2030 || proj2035) && (
-              <div
-                style={{
-                  marginTop: 16,
-                  padding: 14,
-                  background: `${C.green}10`,
-                  border: `1px solid ${C.green}30`,
-                  borderRadius: 10,
-                }}
-              >
-                <p
+          {/* OSL History — 5-year shortage track record */}
+          {data.osl_history?.length > 0 && (
+            <Card style={{ gridColumn: "1 / -1" }}>
+              <SectionHeader
+                title="DEWR Occupation Shortage List (OSL) — 2021 to 2025"
+                color={C.amber}
+              />
+              <div style={{ overflowX: "auto" }}>
+                <table
                   style={{
-                    fontSize: 12,
-                    color: C.green,
-                    fontWeight: 600,
-                    marginBottom: 6,
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    fontSize: 11,
                   }}
                 >
-                  Growth Outlook
-                </p>
-                {proj2030 && (
-                  <p style={{ fontSize: 11, color: C.muted }}>
-                    2030 —{" "}
-                    <strong style={{ color: C.green }}>{proj2030}</strong>{" "}
-                    projected growth
-                  </p>
-                )}
-                {proj2035 && (
-                  <p style={{ fontSize: 11, color: C.muted }}>
-                    2035 —{" "}
-                    <strong style={{ color: C.green }}>{proj2035}</strong>{" "}
-                    projected growth
-                  </p>
-                )}
+                  <thead>
+                    <tr>
+                      {[
+                        "Year",
+                        "National",
+                        "NSW",
+                        "VIC",
+                        "QLD",
+                        "SA",
+                        "WA",
+                        "TAS",
+                        "NT",
+                        "ACT",
+                        "States in Shortage",
+                      ].map((h) => (
+                        <th
+                          key={h}
+                          style={{
+                            padding: "6px 10px",
+                            textAlign: "center",
+                            color: C.muted,
+                            fontWeight: 700,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.06em",
+                            fontSize: 9,
+                            borderBottom: `1px solid ${C.border}`,
+                          }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.osl_history.map((row: any, i: number) => {
+                      const natColor = row.national === 1 ? C.red : C.green;
+                      const stateKeys = [
+                        "NSW",
+                        "VIC",
+                        "QLD",
+                        "SA",
+                        "WA",
+                        "TAS",
+                        "NT",
+                        "ACT",
+                      ];
+                      return (
+                        <tr
+                          key={row.year}
+                          style={{
+                            background: i % 2 === 0 ? "transparent" : "#0a0e16",
+                          }}
+                        >
+                          <td
+                            style={{
+                              padding: "8px 10px",
+                              textAlign: "center",
+                              fontWeight: 700,
+                              color: C.text,
+                            }}
+                          >
+                            {row.year}
+                          </td>
+                          <td
+                            style={{ padding: "8px 10px", textAlign: "center" }}
+                          >
+                            <span
+                              style={{
+                                fontSize: 13,
+                                color: natColor,
+                                fontWeight: 800,
+                              }}
+                            >
+                              {row.national === 1 ? "●" : "○"}
+                            </span>
+                          </td>
+                          {stateKeys.map((s) => {
+                            const val = row[s];
+                            const col =
+                              val === 1
+                                ? C.red
+                                : val === 0
+                                  ? "#1f2937"
+                                  : C.muted;
+                            return (
+                              <td
+                                key={s}
+                                style={{
+                                  padding: "8px 10px",
+                                  textAlign: "center",
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    fontSize: 12,
+                                    color: col,
+                                    fontWeight: val === 1 ? 700 : 400,
+                                  }}
+                                >
+                                  {val === 1 ? "●" : val === 0 ? "○" : "—"}
+                                </span>
+                              </td>
+                            );
+                          })}
+                          <td
+                            style={{ padding: "8px 10px", textAlign: "center" }}
+                          >
+                            <span
+                              style={{
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color:
+                                  (row.shortage_state_count || 0) >= 6
+                                    ? C.red
+                                    : (row.shortage_state_count || 0) >= 3
+                                      ? C.amber
+                                      : C.muted,
+                              }}
+                            >
+                              {row.shortage_state_count || 0}/8
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-            )}
-          </Card>
+              <p style={{ fontSize: 10, color: C.muted, marginTop: 10 }}>
+                Source: DEWR Occupation Shortage List · ● = Shortage · ○ = No
+                shortage · Skill Level {data.osl_history[0]?.skill_level} —{" "}
+                {data.osl_history[0]?.skill_level_desc}
+              </p>
+            </Card>
+          )}
         </div>
       )}
 

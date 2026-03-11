@@ -470,7 +470,7 @@ export default function ShortageAnalysis() {
       {/* ── Top 20 shortage occupations ───────────────────── */}
       <Card style={{ marginBottom: 16 }}>
         <SectionHeader
-          title={`Top Shortage Occupations — ${year} (National)`}
+          title="Top Shortage Occupations — 2025 (National)"
           color={C.red}
         />
         <div
