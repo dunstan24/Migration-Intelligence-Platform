@@ -1,95 +1,370 @@
 """
 routers/predict.py
 POST /api/predict/{model_name}
-Returns: { prediction, confidence, shap_values }
-Models are pre-loaded into memory at startup via main.py lifespan
+==============================================
+Sprint 4 — Real ML model inference
+==============================================
+Models loaded at startup from ml/serialized/
+
+Supported model_name values:
+  - pathway   → EOI invitation probability per state (XGBoost EOI model)
+  - shortage  → Occupation shortage probability 2026-2030 (RandomForest)
+  - approval  → Same EOI model, approval framing
+  - volume    → Placeholder (Prophet — Sprint 4b)
 """
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-import numpy as np
+import json, os
+from pathlib import Path
 
 router = APIRouter()
 
+# ── Model loading at module level (cached in memory) ──────────────
+ML_DIR = Path(__file__).resolve().parent.parent / "ml" / "serialized"
 
-class PredictInput(BaseModel):
-    occupation:   Optional[str]   = None   # ANZSCO code
-    state:        Optional[str]   = None
-    points:       Optional[int]   = None
-    english:      Optional[str]   = None   # competent|proficient|superior
-    age:          Optional[int]   = None
-    experience:   Optional[int]   = None
-    country:      Optional[str]   = None
-    visa_type:    Optional[str]   = None
-    # Shortage model features
-    shortage_streak:    Optional[int]   = None
-    employment_growth:  Optional[float] = None
-    # Approval model features
-    english_band:      Optional[float] = None
-    skills_assessed:   Optional[bool]  = None
-    country_risk_tier: Optional[int]   = None
+_eoi_model     = None
+_eoi_encoders  = None
+_eoi_meta      = None
+_shortage_fc   = None   # pre-computed forecast dict
+_shortage_meta = None
+
+def _load_models():
+    global _eoi_model, _eoi_encoders, _eoi_meta
+    global _shortage_fc, _shortage_meta
+
+    # EOI model
+    eoi_model_path    = ML_DIR / "eoi_model.pkl"
+    eoi_encoders_path = ML_DIR / "eoi_encoders.pkl"
+    eoi_meta_path     = ML_DIR / "eoi_model_meta.json"
+
+    if eoi_model_path.exists() and eoi_encoders_path.exists():
+        try:
+            import joblib
+            _eoi_model    = joblib.load(eoi_model_path)
+            _eoi_encoders = joblib.load(eoi_encoders_path)
+            if eoi_meta_path.exists():
+                with open(eoi_meta_path) as f:
+                    _eoi_meta = json.load(f)
+            print("  ✅ EOI model loaded")
+        except Exception as e:
+            print(f"  ⚠ Could not load EOI model: {e}")
+
+    # Shortage forecast (pre-computed JSON — no inference needed at request time)
+    shortage_fc_path   = ML_DIR / "shortage_forecast.json"
+    shortage_meta_path = ML_DIR / "shortage_model_meta.json"
+
+    if shortage_fc_path.exists():
+        try:
+            with open(shortage_fc_path) as f:
+                _shortage_fc = json.load(f)
+            if shortage_meta_path.exists():
+                with open(shortage_meta_path) as f:
+                    _shortage_meta = json.load(f)
+            print("  ✅ Shortage forecast loaded")
+        except Exception as e:
+            print(f"  ⚠ Could not load shortage forecast: {e}")
+
+# Load on import
+_load_models()
 
 
-def get_shap(model_name: str, features: dict) -> dict:
-    """Generate SHAP values — real implementation uses shap library in Sprint 4."""
-    shap_maps = {
-        "pathway":  {"occupation": 0.42, "state": 0.18, "points": 0.15, "english": 0.12, "age": 0.08, "experience": 0.05},
-        "shortage": {"shortage_streak": 0.38, "employment_growth": 0.24, "jsa_rating": 0.18, "eoi_activity": 0.12, "shortage_count_5yr": 0.08},
-        "volume":   {"base_trend": 0.45, "seasonal": 0.28, "covid_regressor": 0.18, "planning_level": 0.09},
-        "approval": {"points_score": 0.35, "english_band": 0.22, "skills_assessed": 0.18, "country_risk": 0.14, "experience": 0.11},
-    }
-    return shap_maps.get(model_name, {})
+# ── Request / Response schemas ─────────────────────────────────────
+
+class PathwayRequest(BaseModel):
+    anzsco_code: str           # 6-digit code e.g. "261312"
+    points: int                # e.g. 85
+    state: Optional[str] = None  # e.g. "VIC", None = all states
+    visa_type: Optional[str] = "189"  # "189" | "190" | "491"
+    year: Optional[int] = 2026
+    month: Optional[int] = 3
+
+class ShortageRequest(BaseModel):
+    anzsco_code: str           # 6-digit ANZSCO
+    state: Optional[str] = None  # None = all states
+
+class ApprovalRequest(BaseModel):
+    anzsco_code: str
+    points: int
+    state: str
+    visa_type: Optional[str] = "190"
+
+class VolumeRequest(BaseModel):
+    anzsco_code: Optional[str] = None
+    state: Optional[str] = None
 
 
-@router.post("/{model_name}")
-async def predict(model_name: str, body: PredictInput):
+# ── /api/predict/pathway ──────────────────────────────────────────
+
+STATES = ["NSW", "VIC", "QLD", "SA", "WA", "TAS", "NT", "ACT"]
+
+VISA_TYPE_MAP = {
+    "189": "189 Skilled Independent",
+    "190": "190SAS Skilled Australian Sponsored",
+    "491": "491SKR Skilled Work Regional (Provisional)",
+}
+
+@router.post("/pathway")
+async def predict_pathway(req: PathwayRequest):
     """
-    POST /api/predict/{model_name}
-    model_name: pathway | shortage | volume | approval
-    Returns: { prediction, confidence, shap_values, ...model-specific fields }
+    Returns ranked list of states with invitation probability for a given
+    occupation + points combination.
+    Uses EOI XGBoost model if available, else mock.
     """
-    from main import models
+    states_to_check = [req.state] if req.state else STATES
 
-    valid = ["pathway", "shortage", "volume", "approval"]
-    if model_name not in valid:
-        raise HTTPException(400, f"model_name must be one of: {valid}")
+    if _eoi_model is None or _eoi_encoders is None:
+        # ── MOCK fallback ──────────────────────────────────────────
+        results = _mock_pathway(req.anzsco_code, req.points, states_to_check)
+        return {
+            "model": "pathway",
+            "status": "mock",
+            "message": "EOI model not trained yet. Run: python ml/train_eoi_model.py",
+            "results": results,
+        }
 
-    model = models.get(model_name)
-    features = body.dict(exclude_none=True)
+    # ── Real inference ─────────────────────────────────────────────
+    import pandas as pd
+    import numpy as np
 
-    # Sprint 4: real model inference
-    # prediction = model.predict_proba([feature_vector])[0][1]
-    # For now: deterministic mock based on input
-    base_scores = {"pathway": 0.87, "shortage": 0.82, "volume": 0.74, "approval": 0.79}
-    prediction  = base_scores[model_name]
-    confidence  = round(prediction + 0.05, 2)
-    shap_values = get_shap(model_name, features)
+    enc = _eoi_encoders
+    results = []
 
-    response = {
-        "model":      model_name,
-        "prediction": prediction,
-        "confidence": confidence,
-        "shap_values": shap_values,
-        "model_loaded": model is not None,
-        "features_received": list(features.keys()),
+    visa_label = VISA_TYPE_MAP.get(req.visa_type, req.visa_type)
+
+    for state in states_to_check:
+        try:
+            # Encode features
+            visa_enc  = _safe_encode(enc, "Visa Type", visa_label)
+            occ_enc   = _safe_encode(enc, "anzsco_code", req.anzsco_code)
+            state_enc = _safe_encode(enc, "Nominated State", state)
+
+            row = pd.DataFrame([{
+                "Visa Type":       visa_enc,
+                "anzsco_code":     occ_enc,
+                "Points":          req.points,
+                "Nominated State": state_enc,
+                "Month":           req.month,
+                "Year":            req.year,
+            }])
+
+            prob = float(_eoi_model.predict_proba(row)[0][1])
+            results.append({"state": state, "probability": round(prob, 4), "visa_type": req.visa_type})
+
+        except Exception as e:
+            results.append({"state": state, "probability": None, "error": str(e)})
+
+    results.sort(key=lambda x: (x["probability"] or 0), reverse=True)
+
+    return {
+        "model":       "pathway",
+        "status":      "live",
+        "anzsco_code": req.anzsco_code,
+        "points":      req.points,
+        "visa_type":   req.visa_type,
+        "results":     results,
+        "model_meta":  _eoi_meta,
     }
 
-    # Model-specific output fields per README
-    if model_name == "pathway":
-        response["pathways"] = [
-            {"visa": "190 — State Nominated", "state": "VIC", "score": 0.91},
-            {"visa": "491 — Regional",        "state": "QLD", "score": 0.84},
-            {"visa": "189 — Independent",     "state": "NSW", "score": 0.71},
-        ]
 
-    elif model_name == "shortage":
-        response["forecast"] = [
-            {"year": y, "probability": round(prediction + (y - 2025) * 0.02, 3)}
-            for y in range(2026, 2031)
-        ]
+# ── /api/predict/shortage ─────────────────────────────────────────
 
-    elif model_name == "approval":
-        response["risk_flags"] = ["Country risk tier 2"] if (body.country_risk_tier or 2) >= 2 else []
-        response["recommendation"] = "LIKELY APPROVED" if prediction >= 0.75 else "BORDERLINE — seek advice"
+@router.post("/shortage")
+async def predict_shortage(req: ShortageRequest):
+    """
+    Returns 2026–2030 shortage probability for an occupation.
+    Uses pre-computed forecast from shortage_forecast.json.
+    """
+    code = req.anzsco_code.strip()
 
-    return response
+    if _shortage_fc is None:
+        results = _mock_shortage(code, req.state)
+        return {
+            "model": "shortage",
+            "status": "mock",
+            "message": "Shortage model not trained yet. Run: python ml/train_shortage_model.py",
+            "results": results,
+        }
+
+    by_code = _shortage_fc.get("by_code", {})
+    occ_data = by_code.get(code, {})
+
+    if not occ_data:
+        raise HTTPException(status_code=404, detail=f"No forecast data for ANZSCO {code}")
+
+    states_to_return = [req.state] if req.state else list(occ_data.keys())
+    results = []
+    for state in states_to_return:
+        if state in occ_data:
+            results.append({
+                "state": state,
+                "forecast": occ_data[state],  # {"2026": 0.78, "2027": 0.71, ...}
+            })
+
+    return {
+        "model":       "shortage",
+        "status":      "live",
+        "anzsco_code": code,
+        "results":     results,
+        "model_meta":  _shortage_meta,
+    }
+
+
+# ── /api/predict/shortage/top ─────────────────────────────────────
+
+@router.get("/shortage/top")
+async def get_top_shortages(state: str = "NSW", limit: int = 20):
+    """
+    Returns top occupations by shortage probability in 2026 for a given state.
+    Directly from pre-computed index in shortage_forecast.json.
+    """
+    if _shortage_fc is None:
+        return {
+            "model": "shortage",
+            "status": "mock",
+            "state": state,
+            "results": _mock_top_shortage(state, limit),
+        }
+
+    top = _shortage_fc.get("top_shortage", {}).get(state, [])
+    return {
+        "model":   "shortage",
+        "status":  "live",
+        "state":   state,
+        "results": top[:limit],
+        "model_meta": _shortage_meta,
+    }
+
+
+# ── /api/predict/approval ────────────────────────────────────────
+
+@router.post("/approval")
+async def predict_approval(req: ApprovalRequest):
+    """
+    Approval probability for a specific state + visa + points.
+    Reuses EOI model (same underlying question).
+    """
+    pathway_req = PathwayRequest(
+        anzsco_code=req.anzsco_code,
+        points=req.points,
+        state=req.state,
+        visa_type=req.visa_type,
+    )
+    pathway_result = await predict_pathway(pathway_req)
+
+    state_result = next(
+        (r for r in pathway_result["results"] if r["state"] == req.state),
+        {"probability": None}
+    )
+    prob = state_result.get("probability")
+
+    risk_flags = []
+    if prob is not None:
+        if prob < 0.3:
+            risk_flags.append("Low invitation probability — consider higher-demand states")
+        if req.points < 75:
+            risk_flags.append("Points below competitive threshold for most occupations")
+        if prob > 0.7:
+            risk_flags.append("Strong invitation probability — competitive profile")
+
+    return {
+        "model":       "approval",
+        "status":      pathway_result["status"],
+        "anzsco_code": req.anzsco_code,
+        "points":      req.points,
+        "state":       req.state,
+        "visa_type":   req.visa_type,
+        "probability": prob,
+        "risk_flags":  risk_flags,
+        "model_meta":  _eoi_meta,
+    }
+
+
+# ── /api/predict/volume ──────────────────────────────────────────
+
+@router.post("/volume")
+async def predict_volume(req: VolumeRequest):
+    """Volume forecasting — Prophet model — Sprint 4b placeholder."""
+    return {
+        "model":   "volume",
+        "status":  "mock",
+        "message": "Prophet volume model scheduled for Sprint 4b",
+        "results": _mock_volume(req.anzsco_code, req.state),
+    }
+
+
+# ── /api/predict/models ──────────────────────────────────────────
+
+@router.get("/models")
+async def get_model_status():
+    """Returns status and metadata of all loaded models."""
+    return {
+        "eoi_model": {
+            "loaded":  _eoi_model is not None,
+            "meta":    _eoi_meta,
+        },
+        "shortage_model": {
+            "loaded":  _shortage_fc is not None,
+            "meta":    _shortage_meta,
+        },
+    }
+
+
+# ── HELPERS ───────────────────────────────────────────────────────
+
+def _safe_encode(encoders, col, value):
+    """Encode a value; return 0 if unseen label."""
+    le = encoders.get(col)
+    if le is None:
+        return 0
+    classes = list(le.classes_)
+    if value in classes:
+        return int(le.transform([value])[0])
+    # unseen — return most common class index (0)
+    return 0
+
+
+# ── MOCK DATA (fallbacks when model not trained) ──────────────────
+
+def _mock_pathway(anzsco, points, states):
+    import random
+    rng = random.Random(hash(anzsco + str(points)))
+    base = min(0.9, max(0.1, (points - 60) / 50))
+    return [
+        {"state": s, "probability": round(base * rng.uniform(0.7, 1.0), 3), "visa_type": "190"}
+        for s in sorted(states, key=lambda x: rng.random(), reverse=True)
+    ]
+
+def _mock_shortage(code, state):
+    import random
+    rng = random.Random(hash(code))
+    base = rng.uniform(0.3, 0.9)
+    years = [2026, 2027, 2028, 2029, 2030]
+    states = [state] if state else STATES
+    return [
+        {
+            "state": s,
+            "forecast": {str(y): round(base * (0.95 ** i), 4) for i, y in enumerate(years)},
+        }
+        for s in states
+    ]
+
+def _mock_top_shortage(state, limit):
+    return [
+        {"code": "261312", "occupation": "Developer Programmer", "anzsco4": "2613",
+         "prob_2026": 0.85, "prob_2027": 0.82, "prob_2028": 0.79, "prob_2029": 0.77, "prob_2030": 0.75},
+        {"code": "254411", "occupation": "Registered Nurse", "anzsco4": "2544",
+         "prob_2026": 0.81, "prob_2027": 0.80, "prob_2028": 0.78, "prob_2029": 0.74, "prob_2030": 0.70},
+    ][:limit]
+
+def _mock_volume(code, state):
+    months = [
+        "Mar 2026", "Apr 2026", "May 2026", "Jun 2026",
+        "Jul 2026", "Aug 2026", "Sep 2026", "Oct 2026",
+        "Nov 2026", "Dec 2026",
+    ]
+    import random
+    rng = random.Random(hash(str(code) + str(state)))
+    base = rng.randint(200, 800)
+    return [{"month": m, "volume": int(base * rng.uniform(0.85, 1.15))} for m in months]
