@@ -1,5 +1,0 @@
-*.db
-backend/data/
-.venv/
-venv/
-__pycache__/
