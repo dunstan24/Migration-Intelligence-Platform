@@ -7,6 +7,7 @@ const NAV = [
   { label: "EOI Analysis", href: "/dashboard/eoi-analysis" },
   { label: "Shortage", href: "/dashboard/shortage" },
   { label: "Predictors", href: "/dashboard/predictors" },
+  { label: "Pathway", href: "/dashboard/pathway" },
   { label: "Chat", href: "/dashboard/chat" },
   { label: "Reports", href: "/dashboard/reports" },
   { label: "Admin", href: "/dashboard/admin" },
@@ -24,13 +25,15 @@ export default function TopNav() {
           ? "Shortage"
           : pathname.startsWith("/dashboard/predictors")
             ? "Predictors"
-            : pathname.startsWith("/dashboard/chat")
-              ? "Chat"
-              : pathname.startsWith("/dashboard/reports")
-                ? "Reports"
-                : pathname.startsWith("/dashboard/admin")
-                  ? "Admin"
-                  : "Dashboard";
+            : pathname.startsWith("/dashboard/pathway")
+              ? "Pathway"
+              : pathname.startsWith("/dashboard/chat")
+                ? "Chat"
+                : pathname.startsWith("/dashboard/reports")
+                  ? "Reports"
+                  : pathname.startsWith("/dashboard/admin")
+                    ? "Admin"
+                    : "Dashboard";
 
   return (
     <nav
@@ -96,7 +99,7 @@ export default function TopNav() {
               style={{
                 display: "flex",
                 alignItems: "center",
-                padding: "0 16px",
+                padding: "0 14px",
                 fontSize: "13px",
                 fontWeight: active ? 600 : 400,
                 color: active ? "#2a8bff" : "#4b5563",
