@@ -7,6 +7,7 @@
 import { useState, useEffect, useMemo } from "react";
 import {
   ComposedChart,
+  BarChart,
   Area,
   Line,
   Bar,
@@ -16,6 +17,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
+  Cell,
 } from "recharts";
 import { C, Card, PageWrapper } from "@/components/ui";
 
@@ -506,48 +508,44 @@ export default function Predictors() {
               Annual Forecast Totals 2026–2030
             </p>
             <p style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>
-              Sum of monthly forecasts per year
+              Sum of monthly forecasts per year · Note: values are similar by
+              design (stable migration policy)
             </p>
           </div>
-          <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+          {/* Summary stat cards per year */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
             {yearly.map((r: any) => (
-              <div key={r.year} style={{ flex: 1, textAlign: "center" }}>
-                <div
-                  style={{
-                    height: 80,
-                    display: "flex",
-                    alignItems: "flex-end",
-                    justifyContent: "center",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: "60%",
-                      borderRadius: "4px 4px 0 0",
-                      background: YEAR_COLORS[r.year] || C.purple,
-                      height: `${(r.total / Math.max(...yearly.map((x: any) => x.total))) * 80}px`,
-                      minHeight: 8,
-                    }}
-                  />
-                </div>
-                <p style={{ fontSize: 9, color: C.muted, marginTop: 4 }}>
-                  {r.year}
-                </p>
+              <div
+                key={r.year}
+                style={{
+                  flex: 1,
+                  textAlign: "center",
+                  padding: "10px 6px",
+                  background: `${YEAR_COLORS[r.year] || C.purple}12`,
+                  border: `1px solid ${YEAR_COLORS[r.year] || C.purple}30`,
+                  borderRadius: 8,
+                }}
+              >
+                <p style={{ fontSize: 9, color: C.muted }}>{r.year}</p>
                 <p
                   style={{
-                    fontSize: 11,
+                    fontSize: 14,
                     fontWeight: 800,
                     color: YEAR_COLORS[r.year] || C.purple,
-                    marginTop: 2,
+                    marginTop: 3,
                   }}
                 >
-                  {(r.total / 1000000).toFixed(2)}M
+                  {(r.total / 1000000).toFixed(3)}M
+                </p>
+                <p style={{ fontSize: 9, color: C.muted, marginTop: 2 }}>
+                  {r.months} months
                 </p>
               </div>
             ))}
           </div>
-          <ResponsiveContainer width="100%" height={120}>
-            <ComposedChart
+          {/* Bar chart with zoomed Y-axis to show differences */}
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart
               data={yearly}
               margin={{ top: 4, right: 8, bottom: 0, left: -8 }}
             >
@@ -559,13 +557,22 @@ export default function Predictors() {
                 tickLine={false}
               />
               <YAxis
+                domain={[
+                  (dataMin: number) =>
+                    Math.floor((dataMin * 0.9995) / 1000) * 1000,
+                  (dataMax: number) =>
+                    Math.ceil((dataMax * 1.0005) / 1000) * 1000,
+                ]}
                 tick={{ fill: C.muted, fontSize: 9 }}
                 axisLine={false}
                 tickLine={false}
-                tickFormatter={(v) => (v / 1000000).toFixed(1) + "M"}
+                tickFormatter={(v) => (v / 1000000).toFixed(3) + "M"}
               />
               <Tooltip
-                formatter={(v: any) => [fmt(+v), "Annual Total"]}
+                formatter={(v: any) => [
+                  `${(+v / 1000000).toFixed(4)}M (${fmt(+v)})`,
+                  "Annual Total",
+                ]}
                 contentStyle={{
                   background: C.surface,
                   border: `1px solid ${C.border}`,
@@ -573,27 +580,25 @@ export default function Predictors() {
                   fontSize: 11,
                 }}
               />
-              <Line
-                type="monotone"
-                dataKey="total"
-                stroke={C.purple}
-                strokeWidth={2}
-                dot={(props: any) => {
-                  const { cx, cy, payload } = props;
-                  return (
-                    <circle
-                      key={payload.year}
-                      cx={cx}
-                      cy={cy}
-                      r={5}
-                      fill={YEAR_COLORS[payload.year] || C.purple}
-                      stroke="none"
-                    />
-                  );
-                }}
-              />
-            </ComposedChart>
+              <Bar dataKey="total" radius={[4, 4, 0, 0]}>
+                {yearly.map((r: any) => (
+                  <Cell key={r.year} fill={YEAR_COLORS[r.year] || C.purple} />
+                ))}
+              </Bar>
+            </BarChart>
           </ResponsiveContainer>
+          <p style={{ fontSize: 10, color: C.muted, marginTop: 8 }}>
+            ⓘ Y-axis zoomed in — absolute difference between years is ~
+            {fmt(
+              yearly.length >= 2
+                ? Math.round(
+                    Math.max(...yearly.map((r: any) => r.total)) -
+                      Math.min(...yearly.map((r: any) => r.total)),
+                  )
+                : 0,
+            )}{" "}
+            migrants/year
+          </p>
         </Card>
 
         <Card>
@@ -602,7 +607,8 @@ export default function Predictors() {
               Average Monthly Seasonality
             </p>
             <p style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>
-              Mean forecast per calendar month across 2026–2030
+              Mean forecast per calendar month across 2026–2030 · Shows which
+              months typically have higher migration
             </p>
           </div>
           <ResponsiveContainer width="100%" height={200}>
