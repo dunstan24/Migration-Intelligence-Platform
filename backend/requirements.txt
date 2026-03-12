@@ -28,11 +28,11 @@ httpx==0.27.0
 anthropic==0.28.0
 
 # ── ML (Sprint 4) — uncomment when ready ──────────────────
-# scikit-learn==1.5.0
+scikit-learn==1.5.0
 # xgboost==2.0.3
 # prophet==1.1.5
 # shap==0.45.1
-# joblib==1.4.2
+joblib==1.4.2
 
 # ── RAG (Sprint 5) — uncomment when ready ─────────────────
 # chromadb==0.5.3

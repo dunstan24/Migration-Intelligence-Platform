@@ -5,91 +5,217 @@ Returns: { prediction, confidence, shap_values }
 Models are pre-loaded into memory at startup via main.py lifespan
 """
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Literal
 import numpy as np
+import pandas as pd
+import traceback
 
 router = APIRouter()
 
+# ── Feature columns model_a was trained on ───────────────────────────────────
+MODEL_FEATURES = ["occupation", "state", "points", "english_level", "age", "experience"]
 
-class PredictInput(BaseModel):
-    occupation:   Optional[str]   = None   # ANZSCO code
-    state:        Optional[str]   = None
-    points:       Optional[int]   = None
-    english:      Optional[str]   = None   # competent|proficient|superior
-    age:          Optional[int]   = None
-    experience:   Optional[int]   = None
-    country:      Optional[str]   = None
-    visa_type:    Optional[str]   = None
-    # Shortage model features
-    shortage_streak:    Optional[int]   = None
-    employment_growth:  Optional[float] = None
-    # Approval model features
-    english_band:      Optional[float] = None
-    skills_assessed:   Optional[bool]  = None
-    country_risk_tier: Optional[int]   = None
+# ── Visa class labels ─────────────────────────────────────────────────────────
+VISAS = {
+    0: "189 — Independent",
+    1: "190 — State Nominated",
+    2: "491 — Regional Sponsored",
+}
 
+ALL_STATES   = ["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"]
+REGIONAL_STT = ["QLD", "WA", "SA", "TAS", "ACT", "NT"]  # 491 eligible only
 
-def get_shap(model_name: str, features: dict) -> dict:
-    """Generate SHAP values — real implementation uses shap library in Sprint 4."""
-    shap_maps = {
-        "pathway":  {"occupation": 0.42, "state": 0.18, "points": 0.15, "english": 0.12, "age": 0.08, "experience": 0.05},
-        "shortage": {"shortage_streak": 0.38, "employment_growth": 0.24, "jsa_rating": 0.18, "eoi_activity": 0.12, "shortage_count_5yr": 0.08},
-        "volume":   {"base_trend": 0.45, "seasonal": 0.28, "covid_regressor": 0.18, "planning_level": 0.09},
-        "approval": {"points_score": 0.35, "english_band": 0.22, "skills_assessed": 0.18, "country_risk": 0.14, "experience": 0.11},
-    }
-    return shap_maps.get(model_name, {})
+ENGLISH_POINTS = {
+    "vocational": 0,
+    "competent":  0,
+    "proficient": 10,
+    "superior":   20,
+}
 
 
-@router.post("/{model_name}")
-async def predict(model_name: str, body: PredictInput):
+# ── SHAP proxy from GBM feature importances ───────────────────────────────────
+def compute_shap(model, feature_names: list) -> dict:
+    try:
+        importances = model.named_steps["model"].feature_importances_
+        pre = model.named_steps["preprocessor"]
+        num_feats = list(pre.transformers_[0][2])
+        cat_feats  = list(pre.transformers_[1][2])
+        all_feats  = num_feats + cat_feats
+        total = importances.sum() or 1.0
+        shap = {f: round(float(v / total), 4) for f, v in zip(all_feats, importances)}
+        return dict(sorted(shap.items(), key=lambda x: x[1], reverse=True))
+    except Exception:
+        return {}
+
+
+# ── Ranked (visa × state) output ─────────────────────────────────────────────
+def build_ranked_pathways(model, occupation: str, state: str,
+                           points: int, english_level: str,
+                           age: int, experience: int) -> list[dict]:
     """
-    POST /api/predict/{model_name}
-    model_name: pathway | shortage | volume | approval
-    Returns: { prediction, confidence, shap_values, ...model-specific fields }
+    For each of the 3 visa classes × eligible states, run model.predict_proba
+    and return all combinations sorted by score descending.
+    """
+    english_bonus = ENGLISH_POINTS.get(english_level, 0)
+    adj_pts = points + english_bonus
+    ranked = []
+
+    # ── 189 Independent — one entry, state-agnostic ───────────────────────────
+    df_189 = pd.DataFrame([{
+        "occupation": occupation, "state": state,
+        "points": points, "english_level": english_level,
+        "age": age, "experience": experience,
+    }])
+    p189 = float(model.predict_proba(df_189)[0][0])
+    eligible_189 = adj_pts >= 65 and english_level != "vocational"
+    ranked.append({
+        "visa":      "189",
+        "visa_name": "189 — Skilled Independent",
+        "state":     "Any (National)",
+        "score":     round(p189, 4) if eligible_189 else 0.0,
+        "eligible":   eligible_189,
+        "note":       f"No state nomination needed. Adjusted points: {adj_pts}.",
+    })
+
+    # ── 190 State Nominated — one entry per state ────────────────────────────
+    eligible_190 = adj_pts >= 65 and english_level != "vocational"
+    for st in ALL_STATES:
+        df_st = pd.DataFrame([{
+            "occupation": occupation, "state": st,
+            "points": points, "english_level": english_level,
+            "age": age, "experience": experience,
+        }])
+        p190 = float(model.predict_proba(df_st)[0][1])
+        # highlight the user's nominated state
+        boost = 0.03 if st == state else 0.0
+        ranked.append({
+            "visa":      "190",
+            "visa_name": "190 — Skilled Nominated",
+            "state":     st,
+            "score":     round(min(p190 + boost, 1.0), 4) if eligible_190 else 0.0,
+            "eligible":   eligible_190,
+            "note":       "+5 points added by state government upon nomination.",
+        })
+
+    # ── 491 Regional Sponsored — regional states only ─────────────────────────
+    eligible_491 = adj_pts >= 60 and english_level != "vocational"
+    for st in REGIONAL_STT:
+        df_st = pd.DataFrame([{
+            "occupation": occupation, "state": st,
+            "points": points, "english_level": english_level,
+            "age": age, "experience": experience,
+        }])
+        p491 = float(model.predict_proba(df_st)[0][2])
+        boost = 0.03 if st == state else 0.0
+        ranked.append({
+            "visa":      "491",
+            "visa_name": "491 — Skilled Work Regional (Provisional)",
+            "state":     st,
+            "score":     round(min(p491 + boost, 1.0), 4) if eligible_491 else 0.0,
+            "eligible":   eligible_491,
+            "note":       "+15 points added by regional sponsor upon nomination.",
+        })
+
+    ranked.sort(key=lambda x: (x["eligible"], x["score"]), reverse=True)
+    return ranked
+
+
+# ── Request schema — 6 fields only ───────────────────────────────────────────
+class PathwayInput(BaseModel):
+    occupation: str = Field(
+        default="261313",
+        description="ANZSCO 6-digit occupation code",
+        examples=["261313", "254412", "233211", "241411"]
+    )
+    state: Literal["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"] = Field(
+        default="NSW",
+        description="Nominated Australian state or territory"
+    )
+    points: int = Field(
+        default=80, ge=60, le=140,
+        description="Skill Select points score (before English level bonus)"
+    )
+    english_level: Literal["vocational", "competent", "proficient", "superior"] = Field(
+        default="proficient",
+        description=(
+            "Australian English proficiency level. "
+            "vocational=IELTS 5 | competent=IELTS 6 (+0 pts) | "
+            "proficient=IELTS 7 (+10 pts) | superior=IELTS 8+ (+20 pts)"
+        )
+    )
+    age: int = Field(default=30, ge=18, le=45, description="Applicant age in years")
+    experience: int = Field(
+        default=5, ge=0, le=20,
+        description="Years of skilled work experience in the nominated occupation"
+    )
+
+
+# ── Route ─────────────────────────────────────────────────────────────────────
+@router.post("/pathway")
+async def predict_pathway(body: PathwayInput):
+    """
+    POST /api/predict/pathway
+
+    Returns ranked (visa subclass + state) combinations with GBM probability
+    scores, plus SHAP-based feature importance chart data.
+
+    Input: occupation (ANZSCO), state, points, english_level, age, experience
+    Output: ranked pathways array + top_pathway + class_probs + shap_values
     """
     from main import models
 
-    valid = ["pathway", "shortage", "volume", "approval"]
-    if model_name not in valid:
-        raise HTTPException(400, f"model_name must be one of: {valid}")
+    model = models.get("pathway")
+    if not model:
+        return {"error": "Pathway model not loaded into memory."}
 
-    model = models.get(model_name)
-    features = body.dict(exclude_none=True)
+    try:
+        english_bonus = ENGLISH_POINTS.get(body.english_level, 0)
+        adj_pts = body.points + english_bonus
 
-    # Sprint 4: real model inference
-    # prediction = model.predict_proba([feature_vector])[0][1]
-    # For now: deterministic mock based on input
-    base_scores = {"pathway": 0.87, "shortage": 0.82, "volume": 0.74, "approval": 0.79}
-    prediction  = base_scores[model_name]
-    confidence  = round(prediction + 0.05, 2)
-    shap_values = get_shap(model_name, features)
+        # Run inference for the primary input (for class_probs summary)
+        df_primary = pd.DataFrame([{
+            "occupation":    body.occupation,
+            "state":         body.state,
+            "points":        body.points,
+            "english_level": body.english_level,
+            "age":           body.age,
+            "experience":    body.experience,
+        }])
+        probs = model.predict_proba(df_primary)[0]
+        top_class = int(np.argmax(probs))
+        confidence = round(float(np.max(probs)), 4)
 
-    response = {
-        "model":      model_name,
-        "prediction": prediction,
-        "confidence": confidence,
-        "shap_values": shap_values,
-        "model_loaded": model is not None,
-        "features_received": list(features.keys()),
-    }
+        # Build full ranked (visa × state) list
+        ranked = build_ranked_pathways(
+            model,
+            occupation=body.occupation,
+            state=body.state,
+            points=body.points,
+            english_level=body.english_level,
+            age=body.age,
+            experience=body.experience,
+        )
 
-    # Model-specific output fields per README
-    if model_name == "pathway":
-        response["pathways"] = [
-            {"visa": "190 — State Nominated", "state": "VIC", "score": 0.91},
-            {"visa": "491 — Regional",        "state": "QLD", "score": 0.84},
-            {"visa": "189 — Independent",     "state": "NSW", "score": 0.71},
-        ]
+        # SHAP from GBM feature importances
+        shap_values = compute_shap(model, MODEL_FEATURES)
 
-    elif model_name == "shortage":
-        response["forecast"] = [
-            {"year": y, "probability": round(prediction + (y - 2025) * 0.02, 3)}
-            for y in range(2026, 2031)
-        ]
+        return {
+            "model":             "pathway",
+            "prediction":        top_class,
+            "confidence":        confidence,
+            "adjusted_points":   adj_pts,
+            "english_bonus_pts": english_bonus,
+            "class_probs": {
+                VISAS[i]: round(float(p), 4) for i, p in enumerate(probs)
+            },
+            "top_pathway":  ranked[0],
+            "pathways":     ranked,
+            "shap_values":  shap_values,
+            "model_loaded": True,
+            "features_used": MODEL_FEATURES,
+        }
 
-    elif model_name == "approval":
-        response["risk_flags"] = ["Country risk tier 2"] if (body.country_risk_tier or 2) >= 2 else []
-        response["recommendation"] = "LIKELY APPROVED" if prediction >= 0.75 else "BORDERLINE — seek advice"
-
-    return response
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(500, detail=f"Inference error: {str(e)}")
