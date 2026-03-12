@@ -24,7 +24,7 @@ async def lifespan(app: FastAPI):
     model_files = {
         "pathway":  "model_a.joblib",
         "shortage": "model_b.joblib",
-        "volume":   "model_c.joblib",
+        "volume":   "VolumeForecaster.joblib",
         "approval": "model_d.joblib",
     }
 
