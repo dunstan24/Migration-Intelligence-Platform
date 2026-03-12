@@ -76,9 +76,9 @@ df = pd.read_csv(csv_path)
 print(f"\nRows loaded: {len(df)}")
 
 # Parse date  "1/1/2026" → "2026-01-01"
-df["month"] = pd.to_datetime(df["ds"], dayfirst=True).dt.strftime("%Y-%m-%d")
-df["year"]  = pd.to_datetime(df["ds"], dayfirst=True).dt.year
-df["month_no"] = pd.to_datetime(df["ds"], dayfirst=True).dt.month
+df["month"] = pd.to_datetime(df["ds"], dayfirst=False).dt.strftime("%Y-%m-%d")
+df["year"]  = pd.to_datetime(df["ds"], dayfirst=False).dt.year
+df["month_no"] = pd.to_datetime(df["ds"], dayfirst=False).dt.month
 
 # Round all forecast values to 2dp
 for col in ["yhat","yhat_lower_95","yhat_upper_95","yhat_lower_80","yhat_upper_80"]:
