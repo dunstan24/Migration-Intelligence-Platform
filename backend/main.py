@@ -17,25 +17,17 @@ models = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load all 4 .joblib models at startup — never from disk per request."""
+    """Load pathway model (model_a.joblib) at startup — never from disk per request."""
     import joblib
-    models_dir = os.getenv("MODELS_DIR", "./ml/serialized")
+    models_dir = os.getenv("MODELS_DIR", "./models")
 
-    model_files = {
-        "pathway":  "model_a.joblib",
-        "shortage": "model_b.joblib",
-        "volume":   "model_c.joblib",
-        "approval": "model_d.joblib",
-    }
-
-    for name, filename in model_files.items():
-        path = os.path.join(models_dir, filename)
-        if os.path.exists(path):
-            models[name] = joblib.load(path)
-            logger.info(f"✅ Loaded model: {name} from {path}")
-        else:
-            logger.warning(f"⚠️  Model not found: {path} — using None placeholder")
-            models[name] = None
+    path = os.path.join(models_dir, "model_a.joblib")
+    if os.path.exists(path):
+        models["pathway"] = joblib.load(path)
+        logger.info(f"✅ Loaded model: pathway from {path}")
+    else:
+        logger.warning(f"⚠️  Model not found: {path} — using None placeholder")
+        models["pathway"] = None
 
     logger.info(f"🚀 Interlace API started · {len(models)} models in memory")
     yield

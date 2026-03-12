@@ -1,182 +1,210 @@
-# Migration Intelligence Platform - API Documentation
+# Migration Intelligence Platform — API Reference
 
-Base URL (Local): `http://127.0.0.1:8000`
-
-## 1. Data Endpoints (`/api/data/*`)
-
-These endpoints retrieve aggregated data from the SQLite database. Responses are cached in Redis to improve performance.
-
-### `GET /api/data/summary`
-Retrieves key performance indicators (KPIs) for the dashboard.
-- **Response Format:**
-  ```json
-  {
-    "eoi_pool": 2580000,
-    "total_invitations": 58570,
-    "points_cutoff": 85,
-    "shortage_occupations": 342,
-    "total_tracked": 916,
-    "status": "live"
-  }
-  ```
-
-### `GET /api/data/migration-trends`
-Retrieves the breakdown of EOI submissions by their current status.
-- **Response Format:**
-  ```json
-  {
-    "source": "eoi_submissions",
-    "rows": [
-      {"status": "Submitted", "count": 150000},
-      {"status": "Invited", "count": 20000}
-    ],
-    "status": "live"
-  }
-  ```
-
-### `GET /api/data/shortage-heatmap`
-Retrieves a count of occupations experiencing shortages, grouped by shortage type (e.g., National, Regional) for a specific year.
-- **Query Parameters:**
-  - `year` (int, default: 2025): The year to filter by (2021-2025).
-- **Response Format:**
-  ```json
-  {
-    "year": 2025,
-    "source": "osl_shortages",
-    "rows": [
-      {"state": "National", "shortage_count": 150},
-      {"state": "Regional", "shortage_count": 80}
-    ],
-    "status": "live"
-  }
-  ```
-
-### `GET /api/data/eoi`
-Retrieves a breakdown of EOI submissions grouped by Visa Type and Nominated State.
-- **Query Parameters:**
-  - `limit` (int, default: 100): Maximum number of rows to return.
-- **Response Format:**
-  ```json
-  {
-    "source": "eoi_submissions",
-    "rows": [
-      {"visa_type": "190", "state": "NSW", "count": 45000},
-      {"visa_type": "491", "state": "VIC", "count": 32000}
-    ],
-    "status": "live"
-  }
-  ```
-
-### `GET /api/data/employment-projections`
-Retrieves the total projected employment counts grouped by year from the NERO dataset.
-- **Response Format:**
-  ```json
-  {
-    "source": "nero_employment",
-    "rows": [
-      {"year": "2025", "total_employed": 12500000},
-      {"year": "2026", "total_employed": 12800000}
-    ],
-    "status": "live"
-  }
-  ```
-
-### `GET /api/data/visa-analytics`
-Retrieves state nomination quota allocations by visa type and state.
-- **Response Format:**
-  ```json
-  {
-    "source": "quotas",
-    "rows": [
-      {"state": "NSW", "visa_type": "190", "allocation": 3000},
-      {"state": "VIC", "visa_type": "491", "allocation": 2000}
-    ],
-    "status": "live"
-  }
-  ```
+**Base URL (Local):** `http://127.0.0.1:8000`  
+**Base URL (Prod):** `https://your-backend.railway.app`  
+**Interactive docs:** `GET /docs` (Swagger UI)
 
 ---
 
-## 2. Machine Learning Predictors (`/api/predict/*`)
-
-These endpoints perform real-time model inference using loading Scikit-Learn `joblib` models.
-
-### `POST /api/predict/{model_name}`
-Runs statistical inference using one of the four core ML models.
-- **Path Parameters:**
-  - `model_name` (string): Must be one of `pathway`, `shortage`, `volume`, or `approval`.
-- **Request Body (JSON):**
-  ```json
-  {
-    "occupation": "261313",
-    "state": "NSW",
-    "points": 85,
-    "english": "competent",
-    "age": 30,
-    "experience": 3,
-    "country": "CN",
-    "visa_type": "189",
-    "shortage_streak": 1,
-    "employment_growth": 0.05,
-    "base_trend": 0.5,
-    "seasonal": 1.0,
-    "english_band": 6.0,
-    "skills_assessed": "True",
-    "country_risk_tier": 1
-  }
-  ```
-  *(Note: Send only the fields relevant to your chosen model; omitted fields will use defaults).*
-
-- **Response Format (`pathway` example - Classification):**
-  ```json
-  {
-    "model": "pathway",
-    "prediction": 1,
-    "confidence": 0.85,
-    "shap_values": {"occupation": 0.42, "state": 0.18, "points": 0.15},
-    "model_loaded": true,
-    "features_received": ["occupation", "state", "points"],
-    "pathways": [
-      {
-        "visa": "190 — State Nominated",
-        "state": "NSW",
-        "score": 0.85
-      }
-    ]
-  }
-  ```
-
-- **Response Format (`shortage` example - Regression):**
-  ```json
-  {
-    "model": "shortage",
-    "prediction": 0.6543,
-    "confidence": 0.85,
-    "shap_values": {"shortage_streak": 0.38, "employment_growth": 0.24},
-    "model_loaded": true,
-    "features_received": ["shortage_streak", "employment_growth"],
-    "forecast": [
-      {"year": 2026, "shortage_intensity": 0.687},
-      {"year": 2027, "shortage_intensity": 0.720}
-    ]
-  }
-  ```
-
----
-
-## 3. System & Health Endpoints
+## 1. Health Check
 
 ### `GET /health`
-Returns the operational status of the server and verifies which Machine Learning models are correctly loaded into active CPU memory.
-- **Response Format:**
-  ```json
-  {
-    "status": "ok",
-    "models_loaded": {
-      "pathway": true,
-      "shortage": true,
-      "volume": true,
-      "approval": true
-    }
-  }
-  ```
+
+```json
+{
+  "status": "ok",
+  "models_loaded": { "pathway": true }
+}
+```
+
+---
+
+## 2. Data Endpoints — `GET /api/data/*`
+
+All endpoints check Redis cache first → HIT returns immediately / MISS queries DB + caches result.
+
+| Endpoint | TTL | Source Table |
+|---|---|---|
+| `GET /api/data/summary` | 5 min | `eoi_submissions`, `osl_shortages`, `quotas`, `occupations` |
+| `GET /api/data/migration-trends` | 10 min | `eoi_submissions` |
+| `GET /api/data/shortage-heatmap?year=2025` | 60 min | `osl_shortages` |
+| `GET /api/data/eoi?limit=100` | 10 min | `eoi_submissions` |
+| `GET /api/data/employment-projections` | 60 min | `nero_employment` |
+| `GET /api/data/visa-analytics` | 10 min | `quotas` |
+| `GET /api/data/report?type=X&from=Y&to=Z` | — | Celery async (Sprint 6) |
+| `GET /api/data/admin/{path}` | — | Mock — JWT planned Sprint 7 |
+
+### `GET /api/data/summary`
+```json
+{ "eoi_pool": 2580000, "total_invitations": 58570, "points_cutoff": 85, "shortage_occupations": 342, "total_tracked": 916, "status": "live" }
+```
+
+### `GET /api/data/shortage-heatmap?year=2025`
+Param: `year` (int, 2021–2025, default 2025)
+```json
+{ "year": 2025, "rows": [{ "state": "National", "shortage_count": 150 }], "status": "live" }
+```
+
+### `GET /api/data/eoi?limit=100`
+Param: `limit` (int, default 100)
+```json
+{ "rows": [{ "visa_type": "190", "state": "NSW", "count": 45000 }], "status": "live" }
+```
+
+### `GET /api/data/admin/{path}`
+Accepted `{path}`: `users` · `models` · `database`
+
+---
+
+## 3. ML Prediction — `POST /api/predict/pathway`
+
+### Model Summary
+
+| Property | Value |
+|---|---|
+| Algorithm | GradientBoostingClassifier (200 trees, lr=0.08, depth=4) |
+| Type | 3-class classifier |
+| Training data | OSL 2025 shortage list (917 ANZSCO codes × 8 states) |
+| CV Accuracy | ~89% |
+| Model file | `models/model_a.joblib` |
+| Loaded at | Application startup (once) |
+
+---
+
+### Australian English Proficiency Levels
+
+| `english_level` | IELTS Equiv. | Skill Select Bonus |
+|---|---|---|
+| `"vocational"` | 5.0 | +0 pts · ineligible for 189/190 |
+| `"competent"` | 6.0 | +0 pts |
+| `"proficient"` | 7.0 | **+10 pts** |
+| `"superior"` | 8.0+ | **+20 pts** |
+
+---
+
+### Request Body
+
+```json
+{
+  "occupation":    "261313",
+  "state":         "NSW",
+  "points":        80,
+  "english_level": "proficient",
+  "age":           30,
+  "experience":    5
+}
+```
+
+| Field | Type | Range / Options | Description |
+|---|---|---|---|
+| `occupation` | string | 6-digit ANZSCO | e.g. `"261313"` = Software Engineer |
+| `state` | string | NSW / VIC / QLD / WA / SA / TAS / ACT / NT | Nominated state |
+| `points` | int | 60–140 | Skill Select score (before English bonus) |
+| `english_level` | string | vocational / competent / proficient / superior | English proficiency |
+| `age` | int | 18–45 | Applicant age |
+| `experience` | int | 0–20 | Years of experience in nominated occupation |
+
+---
+
+### Response
+
+```json
+{
+  "model":             "pathway",
+  "prediction":        0,
+  "confidence":        0.7231,
+  "adjusted_points":   90,
+  "english_bonus_pts": 10,
+  "class_probs": {
+    "189 — Independent":       0.7231,
+    "190 — State Nominated":   0.1982,
+    "491 — Regional Sponsored": 0.0787
+  },
+  "top_pathway": {
+    "visa":      "189",
+    "visa_name": "189 — Skilled Independent",
+    "state":     "Any (National)",
+    "score":     0.7231,
+    "eligible":  true,
+    "note":      "No state nomination needed. Adjusted points: 90."
+  },
+  "pathways": [
+    { "visa": "189", "visa_name": "189 — Skilled Independent",        "state": "Any (National)", "score": 0.7231, "eligible": true,  "note": "..." },
+    { "visa": "190", "visa_name": "190 — Skilled Nominated",          "state": "NSW",            "score": 0.2282, "eligible": true,  "note": "..." },
+    { "visa": "190", "visa_name": "190 — Skilled Nominated",          "state": "VIC",            "score": 0.1982, "eligible": true,  "note": "..." },
+    { "visa": "491", "visa_name": "491 — Skilled Work Regional",      "state": "QLD",            "score": 0.0921, "eligible": true,  "note": "..." },
+    { "...": "all 8 states for 190, 6 regional states for 491, sorted by score" }
+  ],
+  "shap_values": {
+    "points":         0.4821,
+    "english_level":  0.2314,
+    "occupation":     0.1523,
+    "state":          0.0892,
+    "experience":     0.0312,
+    "age":            0.0138
+  },
+  "model_loaded":  true,
+  "features_used": ["occupation", "state", "points", "english_level", "age", "experience"]
+}
+```
+
+**`pathways` array** — all (visa × state) combinations, sorted by `score` descending:
+
+| Field | Description |
+|---|---|
+| `visa` | Visa subclass: `"189"`, `"190"`, `"491"` |
+| `visa_name` | Full visa name |
+| `state` | Target state, or `"Any (National)"` for 189 |
+| `score` | GBM probability 0–1 |
+| `eligible` | `false` if basic eligibility not met |
+| `note` | Context note (adjusted points, nomination bonus) |
+
+**Prediction classes:** `0` = 189 Independent · `1` = 190 State Nominated · `2` = 491 Regional
+
+---
+
+### Error Responses
+
+| Status | Condition | Body |
+|---|---|---|
+| `500` | Inference error | `{"detail": "Inference error: ..."}` |
+| `200` | Model not loaded | `{"error": "Pathway model not loaded into memory."}` |
+
+---
+
+## 4. LLM / Chat — `POST /api/llm/chat`
+
+RAG pipeline + Anthropic Claude streaming (SSE).
+
+**Request:**
+```json
+{ "message": "Which occupations are in shortage in Victoria?", "session_id": "optional-uuid" }
+```
+
+**Response stream (`text/event-stream`):**
+```
+data: {"token": "Based on the latest OSL data..."}
+data: [DONE]
+```
+
+> Falls back to mock stream if `ANTHROPIC_API_KEY` not set in `.env`.
+
+---
+
+## 5. Field Reference
+
+### `english_level`
+`"vocational"` · `"competent"` · `"proficient"` · `"superior"`
+
+### `state`
+`"NSW"` · `"VIC"` · `"QLD"` · `"WA"` · `"SA"` · `"TAS"` · `"ACT"` · `"NT"`
+
+### `occupation` — ANZSCO examples
+| Code | Occupation |
+|---|---|
+| `261313` | Software Engineer |
+| `254412` | Registered Nurse (Aged Care) |
+| `233211` | Civil Engineer |
+| `241411` | Secondary School Teacher |
+| `252511` | Physiotherapist |
+| `221113` | Taxation Accountant |
