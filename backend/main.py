@@ -1,5 +1,6 @@
 """
 main.py — FastAPI entry point
+Models loaded at startup via lifespan (never from disk per request)
 Routers: /api/data/* | /api/predict/* | /api/llm/*
 """
 from contextlib import asynccontextmanager
@@ -9,34 +10,29 @@ import logging
 import os
 
 logger = logging.getLogger(__name__)
-from config import settings
 
+# Global model store — loaded once at startup, reused per request
 models = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Init database tables
-    from db.database import init_db
-    await init_db()
-    logger.info("✅ Database tables ready")
+    """Load pathway model (model_a.joblib) at startup — never from disk per request."""
+    import joblib
+    models_dir = os.getenv("MODELS_DIR", "./models")
 
-    # Load ML models — skip gracefully if not ready yet (Sprint 4)
-    try:
-        import joblib
-        for name, path in settings.model_paths.items():
-            if os.path.exists(path):
-                models[name] = joblib.load(path)
-                logger.info(f"✅ Model loaded: {name}")
-            else:
-                models[name] = None
-    except ImportError:
-        for name in ["pathway", "shortage", "volume", "approval"]:
-            models[name] = None
+    path = os.path.join(models_dir, "model_a.joblib")
+    if os.path.exists(path):
+        models["pathway"] = joblib.load(path)
+        logger.info(f"✅ Loaded model: pathway from {path}")
+    else:
+        logger.warning(f"⚠️  Model not found: {path} — using None placeholder")
+        models["pathway"] = None
 
-    logger.info(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} ready")
+    logger.info(f"🚀 Interlace API started · {len(models)} models in memory")
     yield
     models.clear()
+    logger.info("🛑 Shutdown — models cleared")
 
 
 app = FastAPI(
@@ -48,12 +44,13 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origins=["http://localhost:3000", "https://*.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Register routers per README structure
 from routers import data, predict, llm
 app.include_router(data.router,    prefix="/api/data",    tags=["Data"])
 app.include_router(predict.router, prefix="/api/predict", tags=["Predict"])
@@ -62,18 +59,7 @@ app.include_router(llm.router,     prefix="/api/llm",     tags=["LLM"])
 
 @app.get("/health")
 async def health():
-    from db.database import engine
-    from sqlalchemy import text
-    db_ok = False
-    try:
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-        db_ok = True
-    except Exception:
-        pass
-
     return {
         "status": "ok",
-        "database": "connected" if db_ok else "not connected",
-        "models": {k: v is not None for k, v in models.items()},
+        "models_loaded": {k: v is not None for k, v in models.items()},
     }
