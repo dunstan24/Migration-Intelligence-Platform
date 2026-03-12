@@ -1,12 +1,9 @@
 "use client";
 /**
- * Global Overview Dashboard
- * GET /api/data/summary           → KPIs (latest snapshot, no filter)
- * GET /api/data/eoi/monthly       → pool + invitations trend (all time, no filter)
- * GET /api/data/eoi/occupations   → top occupations (year, state, visa_type filters → API)
- * GET /api/data/quota             → quota allocation
+ * Global Overview — Migration Intelligence Dashboard
+ * All data real. All fetches parallel. No mock sections.
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   AreaChart,
@@ -19,13 +16,14 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
+  Cell,
 } from "recharts";
-import { C, Card, ChartTip, Badge } from "@/components/ui";
+import { C, Card, ChartTip } from "@/components/ui";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 const fmt = (n: number) => n?.toLocaleString() ?? "—";
 const fmtK = (n: number) =>
-  n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+  n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n ?? 0);
 
 const STATES = ["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"];
 const VISA_COLORS: Record<string, string> = {
@@ -34,97 +32,105 @@ const VISA_COLORS: Record<string, string> = {
   "189": C.green,
   "188": C.amber,
 };
+const STATE_COLORS: Record<string, string> = {
+  NSW: "#2a8bff",
+  VIC: "#8b5cf6",
+  QLD: "#f59e0b",
+  SA: "#ef4444",
+  WA: "#10b981",
+  TAS: "#06b6d4",
+  NT: "#f97316",
+  ACT: "#ec4899",
+};
+
+function KPI({ label, value, sub, color, loading }: any) {
+  return (
+    <div
+      style={{
+        background: C.surface,
+        border: `1px solid ${C.border}`,
+        borderRadius: 10,
+        padding: "16px 18px",
+        borderTop: `3px solid ${color}`,
+      }}
+    >
+      <p
+        style={{
+          fontSize: 10,
+          color: C.muted,
+          textTransform: "uppercase",
+          letterSpacing: "0.08em",
+          fontWeight: 700,
+          marginBottom: 6,
+        }}
+      >
+        {label}
+      </p>
+      <p style={{ fontSize: 24, fontWeight: 800, color, lineHeight: 1 }}>
+        {loading ? <span style={{ color: C.border }}>···</span> : value}
+      </p>
+      <p style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>{sub}</p>
+    </div>
+  );
+}
+
+function SectionHead({ title, sub }: { title: string; sub?: string }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <p style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{title}</p>
+      {sub && (
+        <p style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{sub}</p>
+      )}
+    </div>
+  );
+}
 
 function InvBar({ rate }: { rate: number }) {
-  const pct = Math.min(rate * 100, 100);
-  const color =
-    pct >= 50 ? C.green : pct >= 20 ? C.blue : pct >= 5 ? C.amber : C.muted;
+  const p = Math.min((rate ?? 0) * 100, 100);
+  const col = p >= 50 ? C.green : p >= 20 ? C.blue : p >= 5 ? C.amber : C.muted;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
       <div
         style={{ flex: 1, height: 3, background: C.border, borderRadius: 2 }}
       >
         <div
           style={{
-            width: `${pct}%`,
+            width: `${p}%`,
             height: "100%",
-            background: color,
+            background: col,
             borderRadius: 2,
           }}
         />
       </div>
       <span
         style={{
-          fontSize: 11,
-          color,
-          width: 32,
+          fontSize: 10,
+          color: col,
+          width: 30,
           textAlign: "right",
           fontWeight: 600,
         }}
       >
-        {pct > 0 ? `${pct.toFixed(0)}%` : "—"}
+        {p > 0 ? `${p.toFixed(0)}%` : "—"}
       </span>
     </div>
   );
 }
 
-function KPI({ label, value, sub, color, icon }: any) {
-  return (
-    <div
-      style={{
-        background: C.surface,
-        border: `1px solid ${C.border}`,
-        borderRadius: 12,
-        padding: "18px 20px",
-        position: "relative",
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          position: "absolute",
-          top: -10,
-          right: -10,
-          fontSize: 52,
-          opacity: 0.04,
-          userSelect: "none",
-          pointerEvents: "none",
-        }}
-      >
-        {icon}
-      </div>
-      <p
-        style={{
-          fontSize: 10,
-          color: C.muted,
-          textTransform: "uppercase",
-          letterSpacing: "0.1em",
-          fontWeight: 700,
-          marginBottom: 8,
-        }}
-      >
-        {label}
-      </p>
-      <p
-        style={{
-          fontSize: 26,
-          fontWeight: 800,
-          color,
-          lineHeight: 1,
-          marginBottom: 6,
-        }}
-      >
-        {value}
-      </p>
-      <p style={{ fontSize: 11, color: "#374151" }}>{sub}</p>
-    </div>
-  );
-}
+const sel: any = {
+  background: C.bg,
+  border: `1px solid ${C.border}`,
+  borderRadius: 6,
+  padding: "7px 12px",
+  color: C.text,
+  fontSize: 12,
+  outline: "none",
+  cursor: "pointer",
+};
 
 export default function GlobalOverview() {
   const router = useRouter();
 
-  // Filters — all three sent to API
   const [yearFilter, setYearFilter] = useState<number | null>(null);
   const [stateFilter, setStateFilter] = useState("");
   const [visaFilter, setVisaFilter] = useState("");
@@ -134,31 +140,44 @@ export default function GlobalOverview() {
   );
   const [limit, setLimit] = useState(50);
 
-  // Data
   const [summary, setSummary] = useState<any>(null);
   const [monthly, setMonthly] = useState<any[]>([]);
   const [occs, setOccs] = useState<any[]>([]);
   const [quota, setQuota] = useState<any>(null);
-  const [loadingOccs, setLoadingOccs] = useState(true);
-  const [loadingSummary, setLoadingSummary] = useState(true);
+  const [osl, setOsl] = useState<any>(null);
+  const [nero, setNero] = useState<any>(null);
+  const [forecast, setForecast] = useState<any[]>([]);
 
-  // Summary, monthly, quota — once
+  const [loadSummary, setLoadSummary] = useState(true);
+  const [loadOccs, setLoadOccs] = useState(true);
+
+  // Fire all background requests in parallel
   useEffect(() => {
-    fetch(`${API}/api/data/summary`)
-      .then((r) => r.json())
-      .then(setSummary)
-      .finally(() => setLoadingSummary(false));
-    fetch(`${API}/api/data/eoi/monthly`)
-      .then((r) => r.json())
-      .then((d) => setMonthly(d.records || []));
-    fetch(`${API}/api/data/quota`)
-      .then((r) => r.json())
-      .then(setQuota);
+    Promise.allSettled([
+      fetch(`${API}/api/data/summary`).then((r) => r.json()),
+      fetch(`${API}/api/data/eoi/monthly`).then((r) => r.json()),
+      fetch(`${API}/api/data/quota`).then((r) => r.json()),
+      fetch(`${API}/api/data/osl-trend`).then((r) => r.json()),
+      fetch(`${API}/api/data/nero-summary`).then((r) => r.json()),
+      fetch(
+        `${API}/api/data/shortage-forecast?state=NSW&sort_year=2026&limit=8`,
+      ).then((r) => r.json()),
+    ]).then(([s, m, q, osl, nero, fc]) => {
+      if (s.status === "fulfilled") {
+        setSummary(s.value);
+        setLoadSummary(false);
+      }
+      if (m.status === "fulfilled") setMonthly(m.value?.records || []);
+      if (q.status === "fulfilled") setQuota(q.value);
+      if (osl.status === "fulfilled") setOsl(osl.value);
+      if (nero.status === "fulfilled") setNero(nero.value);
+      if (fc.status === "fulfilled") setForecast(fc.value?.records || []);
+    });
   }, []);
 
-  // Occupations — refetch when any filter changes (all sent to API)
+  // Occupation table - refetch on filter change
   useEffect(() => {
-    setLoadingOccs(true);
+    setLoadOccs(true);
     const p = new URLSearchParams({ limit: String(limit) });
     if (yearFilter) p.append("year", String(yearFilter));
     if (stateFilter) p.append("state", stateFilter);
@@ -166,58 +185,43 @@ export default function GlobalOverview() {
     fetch(`${API}/api/data/eoi/occupations?${p}`)
       .then((r) => r.json())
       .then((d) => setOccs(d.records || []))
-      .finally(() => setLoadingOccs(false));
+      .finally(() => setLoadOccs(false));
   }, [yearFilter, stateFilter, visaFilter, limit]);
 
-  // Client-side: search + sort only
-  const filtered = occs
-    .filter(
-      (o) =>
-        !search ||
-        o.occupation_name.toLowerCase().includes(search.toLowerCase()) ||
-        o.anzsco_code.includes(search),
-    )
-    .sort((a, b) => {
-      if (sortBy === "pool") return b.pool - a.pool;
-      if (sortBy === "invitations") return b.invitations - a.invitations;
-      return b.invitation_rate - a.invitation_rate;
-    });
+  const filtered = useMemo(
+    () =>
+      occs
+        .filter(
+          (o) =>
+            !search ||
+            o.occupation_name.toLowerCase().includes(search.toLowerCase()) ||
+            o.anzsco_code.includes(search),
+        )
+        .sort((a, b) =>
+          sortBy === "pool"
+            ? b.pool - a.pool
+            : sortBy === "rate"
+              ? b.invitation_rate - a.invitation_rate
+              : b.invitations - a.invitations,
+        ),
+    [occs, search, sortBy],
+  );
 
-  const monthlyChart = monthly.slice(-12);
+  const monthlyChart = monthly.slice(-14);
 
-  // Visa breakdown from occupations (reflects current filters)
-  const visaMap: Record<string, { pool: number; inv: number }> = {};
-  for (const o of occs) {
-    for (const v of o.visa_types || []) {
-      if (!visaMap[v]) visaMap[v] = { pool: 0, inv: 0 };
-      visaMap[v].pool += o.pool;
-      visaMap[v].inv += o.invitations;
-    }
-  }
-  const visaChartData = Object.entries(visaMap).map(([visa, d]) => ({
-    visa: `Visa ${visa}`,
-    pool: d.pool,
-    inv: d.inv,
+  const stateShortageData = STATES.map((s) => ({
+    state: s,
+    count: osl?.yearly_trend?.[osl.yearly_trend.length - 1]?.[s] ?? 0,
   }));
 
-  const selectStyle = {
-    background: C.bg,
-    border: `1px solid ${C.border}`,
-    borderRadius: 6,
-    padding: "7px 12px",
-    color: C.text,
-    fontSize: 12,
-    outline: "none",
-    cursor: "pointer",
-  };
-
   const hasFilter = yearFilter || stateFilter || visaFilter;
+  const latestOsl = osl?.yearly_trend?.[osl.yearly_trend.length - 1];
 
   return (
     <div
       style={{
         padding: "24px 28px",
-        maxWidth: 1500,
+        maxWidth: 1540,
         background: C.bg,
         minHeight: "100vh",
       }}
@@ -236,7 +240,7 @@ export default function GlobalOverview() {
         <div>
           <h1
             style={{
-              fontSize: 20,
+              fontSize: 21,
               fontWeight: 800,
               color: "#f9fafb",
               marginBottom: 3,
@@ -245,9 +249,11 @@ export default function GlobalOverview() {
             Migration Intelligence
           </h1>
           <p style={{ fontSize: 12, color: C.muted }}>
-            SkillSelect EOI data ·{" "}
-            {loadingSummary ? "..." : summary?.latest_snapshot} ·{" "}
-            {fmt(summary?.eoi_pool || 0)} active pool
+            SkillSelect EOI · Latest snapshot:{" "}
+            <strong style={{ color: C.text }}>
+              {summary?.latest_snapshot ?? "…"}
+            </strong>
+            &nbsp;·&nbsp; {fmt(summary?.eoi_pool ?? 0)} active EOIs
           </p>
         </div>
         <div
@@ -276,141 +282,117 @@ export default function GlobalOverview() {
                 fontWeight: 600,
               }}
             >
-              ✕ Clear
+              ✕ Clear filters
             </button>
           )}
-          <span style={{ fontSize: 11, color: C.muted }}>Year:</span>
           <select
-            style={selectStyle}
+            style={sel}
             value={yearFilter ?? ""}
             onChange={(e) =>
               setYearFilter(e.target.value ? Number(e.target.value) : null)
             }
           >
-            <option value="">All</option>
+            <option value="">All years</option>
             <option value="2024">2024</option>
             <option value="2025">2025</option>
             <option value="2026">2026</option>
           </select>
-          <span style={{ fontSize: 11, color: C.muted }}>State:</span>
           <select
-            style={selectStyle}
+            style={sel}
             value={stateFilter}
             onChange={(e) => setStateFilter(e.target.value)}
           >
-            <option value="">All States</option>
+            <option value="">All states</option>
             {STATES.map((s) => (
               <option key={s} value={s}>
                 {s}
               </option>
             ))}
           </select>
-          <span style={{ fontSize: 11, color: C.muted }}>Visa:</span>
           <select
-            style={selectStyle}
+            style={sel}
             value={visaFilter}
             onChange={(e) => setVisaFilter(e.target.value)}
           >
-            <option value="">All</option>
-            <option value="190">190</option>
-            <option value="491">491</option>
-            <option value="189">189</option>
+            <option value="">All visas</option>
+            <option value="190">Visa 190</option>
+            <option value="491">Visa 491</option>
+            <option value="189">Visa 189</option>
           </select>
         </div>
       </div>
 
-      {/* KPI Row — always latest snapshot, never affected by filters */}
+      {/* KPIs */}
       <div
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(6,1fr)",
-          gap: 14,
+          gap: 12,
           marginBottom: 20,
         }}
       >
         <KPI
+          loading={loadSummary}
           label="Active EOI Pool"
-          value={loadingSummary ? "..." : fmt(summary?.eoi_pool || 0)}
-          sub="Latest snapshot"
           color={C.blue}
-          icon="📋"
+          value={fmt(summary?.eoi_pool)}
+          sub={`Snapshot ${summary?.latest_snapshot ?? "…"}`}
         />
         <KPI
-          label="Visa 190 Quota"
-          value={quota ? fmt(quota.total_190_quota) : "..."}
-          sub="State nominated 2024-25"
-          color={C.purple}
-          icon="🎯"
-        />
-        <KPI
-          label="Visa 491 Quota"
-          value={quota ? fmt(quota.total_491_quota) : "..."}
-          sub="Regional nominated 2024-25"
-          color={C.cyan}
-          icon="🗺️"
-        />
-        <KPI
+          loading={loadSummary}
           label="Total Invitations"
-          value={loadingSummary ? "..." : fmt(summary?.total_invitations || 0)}
-          sub="Latest snapshot"
           color={C.green}
-          icon="✉️"
+          value={fmt(summary?.total_invitations)}
+          sub="Latest snapshot"
         />
         <KPI
+          loading={loadSummary}
           label="Points Cutoff"
-          value={loadingSummary ? "..." : `${summary?.points_cutoff || 0} pts`}
-          sub="Max invited (latest)"
           color={C.amber}
-          icon="🎯"
+          value={`${summary?.points_cutoff ?? 0}pts`}
+          sub="Max invited (latest)"
         />
         <KPI
-          label="Occupations"
-          value={
-            loadingSummary ? "..." : fmt(summary?.shortage_occupations || 0)
-          }
-          sub="Unique ANZSCO codes"
+          loading={loadSummary}
+          label="Unique Occupations"
           color={C.purple}
-          icon="👷"
+          value={fmt(summary?.shortage_occupations)}
+          sub="ANZSCO codes in EOI"
+        />
+        <KPI
+          loading={!quota}
+          label="Visa 190 Quota"
+          color={C.cyan}
+          value={quota ? fmt(quota.total_190_quota) : "…"}
+          sub={`${quota?.latest_year ?? ""} allocation`}
+        />
+        <KPI
+          loading={!osl}
+          label="National Shortage"
+          color="#ef4444"
+          value={osl ? fmt(latestOsl?.national) : "…"}
+          sub="Occupations on OSL 2025"
         />
       </div>
 
-      {/* Charts Row */}
+      {/* Row 1: EOI trend + Quota */}
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1.4fr 1fr",
+          gridTemplateColumns: "1.5fr 1fr",
           gap: 14,
-          marginBottom: 20,
+          marginBottom: 14,
         }}
       >
-        {/* Monthly trend — all time, no filter */}
         <Card>
-          <p
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              color: "#d1d5db",
-              marginBottom: 14,
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: C.blue,
-                display: "inline-block",
-              }}
-            />
-            EOI Pool & Invitations — Last 12 Months
-          </p>
-          <ResponsiveContainer width="100%" height={180}>
+          <SectionHead
+            title="EOI Pool & Invitations — Last 14 Months"
+            sub="Source: SkillSelect EOI snapshots · eoi_records (8.3M rows)"
+          />
+          <ResponsiveContainer width="100%" height={190}>
             <AreaChart
               data={monthlyChart}
-              margin={{ top: 4, right: 8, bottom: 0, left: -15 }}
+              margin={{ top: 4, right: 8, bottom: 0, left: -12 }}
             >
               <defs>
                 <linearGradient id="gPool" x1="0" y1="0" x2="0" y2="1">
@@ -460,43 +442,317 @@ export default function GlobalOverview() {
           </ResponsiveContainer>
         </Card>
 
-        {/* Visa breakdown — reflects current filters via occupations query */}
         <Card>
-          <p
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              color: "#d1d5db",
-              marginBottom: 14,
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-            }}
-          >
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: C.purple,
-                display: "inline-block",
-              }}
-            />
-            Visa Type Breakdown
-            {hasFilter && (
-              <span style={{ fontSize: 10, color: C.muted, marginLeft: 4 }}>
-                (filtered)
-              </span>
-            )}
-          </p>
-          <ResponsiveContainer width="100%" height={180}>
+          <SectionHead
+            title="State Nomination Quota"
+            sub={`Visa 190 + 491 · ${quota?.latest_year ?? "…"} · Source: state_nomination_quotas`}
+          />
+          <ResponsiveContainer width="100%" height={190}>
             <BarChart
-              data={visaChartData}
-              margin={{ top: 4, right: 8, bottom: 0, left: -15 }}
+              data={quota?.state_allocation ?? []}
+              margin={{ top: 4, right: 8, bottom: 0, left: -12 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
               <XAxis
-                dataKey="visa"
+                dataKey="state"
+                tick={{ fill: C.muted, fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                tick={{ fill: C.muted, fontSize: 9 }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <Tooltip content={<ChartTip />} />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+              <Bar
+                dataKey="visa_190"
+                name="Visa 190"
+                fill={C.blue}
+                radius={[3, 3, 0, 0]}
+              />
+              <Bar
+                dataKey="visa_491"
+                name="Visa 491"
+                fill={C.purple}
+                radius={[3, 3, 0, 0]}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+      </div>
+
+      {/* Row 2: OSL + State shortage + ML Forecast */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr 1fr",
+          gap: 14,
+          marginBottom: 14,
+        }}
+      >
+        <Card>
+          <SectionHead
+            title="National Shortage Trend 2021–2025"
+            sub="Source: osl_shortage (4,486 rows)"
+          />
+          <ResponsiveContainer width="100%" height={170}>
+            <AreaChart
+              data={osl?.yearly_trend ?? []}
+              margin={{ top: 4, right: 8, bottom: 0, left: -12 }}
+            >
+              <defs>
+                <linearGradient id="gOsl" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#ef4444" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+              <XAxis
+                dataKey="year"
+                tick={{ fill: C.muted, fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                tick={{ fill: C.muted, fontSize: 9 }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <Tooltip content={<ChartTip />} />
+              <Area
+                type="monotone"
+                dataKey="national"
+                name="National Shortage"
+                stroke="#ef4444"
+                fill="url(#gOsl)"
+                strokeWidth={2}
+                dot={{ r: 4, fill: "#ef4444" }}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </Card>
+
+        <Card>
+          <SectionHead
+            title="Shortage by State — 2025"
+            sub="Source: osl_shortage · 8 states"
+          />
+          <ResponsiveContainer width="100%" height={170}>
+            <BarChart
+              data={stateShortageData}
+              margin={{ top: 4, right: 8, bottom: 0, left: -12 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+              <XAxis
+                dataKey="state"
+                tick={{ fill: C.muted, fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                tick={{ fill: C.muted, fontSize: 9 }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <Tooltip content={<ChartTip />} />
+              <Bar
+                dataKey="count"
+                name="Shortage Occupations"
+                radius={[3, 3, 0, 0]}
+              >
+                {stateShortageData.map((d) => (
+                  <Cell key={d.state} fill={STATE_COLORS[d.state]} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+
+        <Card>
+          <SectionHead
+            title="Top ML Shortage Risk — NSW 2026"
+            sub="Source: shortage_forecast · RandomForest (7,328 rows)"
+          />
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {forecast.length === 0 ? (
+              <p
+                style={{
+                  color: C.muted,
+                  fontSize: 11,
+                  padding: "20px 0",
+                  textAlign: "center",
+                }}
+              >
+                Loading…
+              </p>
+            ) : (
+              forecast.slice(0, 7).map((r: any) => {
+                const p = r.prob_2026 ?? 0;
+                const col =
+                  p >= 0.65 ? "#ef4444" : p >= 0.4 ? "#f59e0b" : "#10b981";
+                return (
+                  <div
+                    key={r.anzsco_code}
+                    style={{ display: "flex", alignItems: "center", gap: 8 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 9,
+                        color: C.muted,
+                        fontFamily: "monospace",
+                        width: 48,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {r.anzsco_code}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: C.text,
+                        flex: 1,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {r.occupation}
+                    </span>
+                    <div
+                      style={{
+                        width: 60,
+                        height: 4,
+                        background: C.border,
+                        borderRadius: 2,
+                        flexShrink: 0,
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${p * 100}%`,
+                          height: "100%",
+                          background: col,
+                          borderRadius: 2,
+                        }}
+                      />
+                    </div>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: col,
+                        width: 32,
+                        textAlign: "right",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {(p * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                );
+              })
+            )}
+            <button
+              onClick={() => router.push("/dashboard/shortage")}
+              style={{
+                marginTop: 2,
+                padding: "6px 0",
+                border: `1px solid ${C.border}`,
+                borderRadius: 6,
+                background: "transparent",
+                color: C.muted,
+                fontSize: 10,
+                cursor: "pointer",
+              }}
+            >
+              View full forecast →
+            </button>
+          </div>
+        </Card>
+      </div>
+
+      {/* Row 3: NERO + National planning */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 14,
+          marginBottom: 14,
+        }}
+      >
+        <Card>
+          <SectionHead
+            title={`Top NERO Regional Occupations — ${nero?.latest_date ?? "…"}`}
+            sub="Estimated employment in regional areas · Source: nero_regional (89k rows)"
+          />
+          <div style={{ maxHeight: 200, overflowY: "auto" }}>
+            {(nero?.top_regional ?? [])
+              .slice(0, 10)
+              .map((r: any, i: number) => (
+                <div
+                  key={r.anzsco4_code}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "6px 4px",
+                    borderBottom: `1px solid ${C.border}22`,
+                    background: i % 2 === 0 ? "transparent" : "#0a0e18",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 9,
+                      color: C.muted,
+                      fontFamily: "monospace",
+                      width: 40,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {r.anzsco4_code}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: C.text,
+                      flex: 1,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {r.anzsco4_name}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      color: C.cyan,
+                      fontWeight: 700,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {fmt(r.nero_estimate)}
+                  </span>
+                </div>
+              ))}
+          </div>
+        </Card>
+
+        <Card>
+          <SectionHead
+            title="National Migration Planning Levels"
+            sub="By program type · Source: national_migration_quotas (48 rows)"
+          />
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart
+              data={quota?.national_planning ?? []}
+              margin={{ top: 4, right: 8, bottom: 0, left: -12 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+              <XAxis
+                dataKey="year"
                 tick={{ fill: C.muted, fontSize: 10 }}
                 axisLine={false}
                 tickLine={false}
@@ -510,170 +766,40 @@ export default function GlobalOverview() {
               <Tooltip content={<ChartTip />} />
               <Legend wrapperStyle={{ fontSize: 10 }} />
               <Bar
-                dataKey="pool"
-                name="Pool"
+                dataKey="employer_sponsored"
+                name="Employer Sponsored"
                 fill={C.blue}
-                fillOpacity={0.6}
-                radius={[3, 3, 0, 0]}
+                stackId="a"
               />
               <Bar
-                dataKey="inv"
-                name="Invitations"
+                dataKey="skilled_independent"
+                name="Skilled Independent"
                 fill={C.green}
+                stackId="a"
+              />
+              <Bar
+                dataKey="regional"
+                name="Regional"
+                fill={C.purple}
+                stackId="a"
+              />
+              <Bar
+                dataKey="state_nominated"
+                name="State Nominated"
+                fill={C.amber}
                 radius={[3, 3, 0, 0]}
+                stackId="a"
               />
             </BarChart>
           </ResponsiveContainer>
         </Card>
       </div>
 
-      {/* Quota Charts */}
-      {quota && (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: 14,
-            marginBottom: 20,
-          }}
-        >
-          <Card>
-            <p
-              style={{
-                fontSize: 12,
-                fontWeight: 600,
-                color: "#d1d5db",
-                marginBottom: 14,
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <span
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  background: C.purple,
-                  display: "inline-block",
-                }}
-              />
-              State Nomination Allocation — {quota.latest_year}
-            </p>
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart
-                data={quota.state_allocation}
-                margin={{ top: 4, right: 8, bottom: 0, left: -15 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                <XAxis
-                  dataKey="state"
-                  tick={{ fill: C.muted, fontSize: 10 }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  tick={{ fill: C.muted, fontSize: 9 }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip content={<ChartTip />} />
-                <Legend wrapperStyle={{ fontSize: 10 }} />
-                <Bar
-                  dataKey="visa_190"
-                  name="Visa 190"
-                  fill={C.blue}
-                  radius={[3, 3, 0, 0]}
-                />
-                <Bar
-                  dataKey="visa_491"
-                  name="Visa 491"
-                  fill={C.purple}
-                  radius={[3, 3, 0, 0]}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </Card>
-
-          <Card>
-            <p
-              style={{
-                fontSize: 12,
-                fontWeight: 600,
-                color: "#d1d5db",
-                marginBottom: 14,
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <span
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  background: C.amber,
-                  display: "inline-block",
-                }}
-              />
-              National Migration Planning Levels
-            </p>
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart
-                data={quota.national_planning}
-                margin={{ top: 4, right: 8, bottom: 0, left: -15 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                <XAxis
-                  dataKey="year"
-                  tick={{ fill: C.muted, fontSize: 10 }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  tick={{ fill: C.muted, fontSize: 9 }}
-                  axisLine={false}
-                  tickLine={false}
-                  tickFormatter={(v) => (v / 1000).toFixed(0) + "k"}
-                />
-                <Tooltip content={<ChartTip />} />
-                <Legend wrapperStyle={{ fontSize: 10 }} />
-                <Bar
-                  dataKey="employer_sponsored"
-                  name="Employer Sponsored"
-                  fill={C.blue}
-                  stackId="a"
-                />
-                <Bar
-                  dataKey="skilled_independent"
-                  name="Skilled Independent"
-                  fill={C.green}
-                  stackId="a"
-                />
-                <Bar
-                  dataKey="regional"
-                  name="Regional"
-                  fill={C.purple}
-                  stackId="a"
-                />
-                <Bar
-                  dataKey="state_nominated"
-                  name="State Nominated"
-                  fill={C.amber}
-                  radius={[3, 3, 0, 0]}
-                  stackId="a"
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </Card>
-        </div>
-      )}
-
       {/* Occupation Table */}
       <Card style={{ padding: 0 }}>
         <div
           style={{
-            padding: "16px 20px",
+            padding: "14px 20px",
             borderBottom: `1px solid ${C.border}`,
             display: "flex",
             alignItems: "center",
@@ -686,10 +812,11 @@ export default function GlobalOverview() {
               All Occupations
             </p>
             <p style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>
-              {loadingOccs ? "Loading..." : `${filtered.length} occupations`}
+              {loadOccs ? "Loading…" : `${filtered.length} occupations`}
               {yearFilter && ` · ${yearFilter}`}
               {stateFilter && ` · ${stateFilter}`}
               {visaFilter && ` · Visa ${visaFilter}`}
+              &nbsp;· Click any row for full analysis
             </p>
           </div>
           <div
@@ -703,7 +830,7 @@ export default function GlobalOverview() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="🔍  Search occupation or ANZSCO..."
+              placeholder="🔍  Search occupation or ANZSCO…"
               style={{
                 background: C.bg,
                 border: `1px solid ${C.border}`,
@@ -716,16 +843,16 @@ export default function GlobalOverview() {
               }}
             />
             <select
-              style={selectStyle}
+              style={sel}
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as any)}
             >
               <option value="invitations">Sort: Invitations</option>
-              <option value="pool">Sort: Pool Size</option>
-              <option value="rate">Sort: Inv. Rate</option>
+              <option value="pool">Sort: Pool size</option>
+              <option value="rate">Sort: Inv. rate</option>
             </select>
             <select
-              style={selectStyle}
+              style={sel}
               value={limit}
               onChange={(e) => setLimit(Number(e.target.value))}
             >
@@ -736,11 +863,10 @@ export default function GlobalOverview() {
           </div>
         </div>
 
-        {/* Column headers */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "2.2fr 0.7fr 1fr 0.9fr 0.9fr 1.1fr 1fr",
+            gridTemplateColumns: "2.2fr 0.7fr 0.9fr 0.9fr 0.9fr 1.1fr 1fr",
             gap: 8,
             padding: "8px 20px",
             borderBottom: `1px solid ${C.border}`,
@@ -759,7 +885,7 @@ export default function GlobalOverview() {
               key={h}
               style={{
                 fontSize: 10,
-                color: "#374151",
+                color: C.muted,
                 fontWeight: 700,
                 textTransform: "uppercase",
                 letterSpacing: "0.07em",
@@ -770,9 +896,8 @@ export default function GlobalOverview() {
           ))}
         </div>
 
-        {/* Rows */}
         <div style={{ maxHeight: 520, overflowY: "auto" }}>
-          {loadingOccs ? (
+          {loadOccs ? (
             <div
               style={{
                 padding: "40px 0",
@@ -781,7 +906,7 @@ export default function GlobalOverview() {
                 fontSize: 12,
               }}
             >
-              Loading occupations...
+              Loading occupations…
             </div>
           ) : filtered.length === 0 ? (
             <div
@@ -792,7 +917,7 @@ export default function GlobalOverview() {
                 fontSize: 12,
               }}
             >
-              No occupations found — try adjusting filters
+              No occupations found
             </div>
           ) : (
             filtered.map((o, i) => (
@@ -803,13 +928,14 @@ export default function GlobalOverview() {
                 }
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "2.2fr 0.7fr 1fr 0.9fr 0.9fr 1.1fr 1fr",
+                  gridTemplateColumns:
+                    "2.2fr 0.7fr 0.9fr 0.9fr 0.9fr 1.1fr 1fr",
                   gap: 8,
                   padding: "10px 20px",
                   alignItems: "center",
                   background: i % 2 === 0 ? "transparent" : "#090d14",
                   cursor: "pointer",
-                  borderBottom: `1px solid ${C.border}22`,
+                  borderBottom: `1px solid ${C.border}18`,
                 }}
                 onMouseEnter={(e) =>
                   (e.currentTarget.style.background = "#0f1520")
@@ -882,11 +1008,11 @@ export default function GlobalOverview() {
           }}
         >
           <span style={{ fontSize: 11, color: C.muted }}>
-            Click any occupation to view detailed analysis
+            Source: SkillSelect EOI · eoi_records · 8,303,408 rows
           </span>
           <span style={{ fontSize: 11, color: C.muted }}>
-            Source: SkillSelect EOI · warehouse.db ·{" "}
-            {fmt(summary?.eoi_pool || 0)} active EOIs
+            {fmt(summary?.eoi_pool ?? 0)} active ·{" "}
+            {summary?.latest_snapshot ?? "…"}
           </span>
         </div>
       </Card>

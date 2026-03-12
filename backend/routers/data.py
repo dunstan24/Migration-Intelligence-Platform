@@ -1213,6 +1213,125 @@ async def get_occupation_detail(anzsco: str, db: AsyncSession = Depends(get_db))
     await set_cache(cache_key, json.dumps(data), ttl=settings.CACHE_DEFAULT_TTL)
     return data
 
+# ── /api/data/shortage-forecast ──────────────────────────────
+@router.get("/shortage-forecast")
+async def get_shortage_forecast(
+    state:     str = Query(None),
+    limit:     int = Query(50, le=500),
+    sort_year: int = Query(2026),
+    search:    str = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    ML-predicted shortage probabilities 2026–2030 from RandomForest model.
+    Source: shortage_forecast table (ingested from Occupation_Shortage_Forecaster_2026_2030_Wide.csv).
+    ✅ REAL DATA — not mock.
+    """
+    cache_key = f"data:shortage_forecast:{state}:{limit}:{sort_year}:{search}"
+    cached = await get_cache(cache_key)
+    if cached:
+        return JSONResponse(json.loads(cached))
+
+    sort_col = f"prob_{sort_year}" if sort_year in (2026,2027,2028,2029,2030) else "prob_2026"
+
+    try:
+        conditions = []
+        params: dict = {"limit": limit}
+        if state:
+            conditions.append("state = :state")
+            params["state"] = state
+        if search:
+            conditions.append("(occupation LIKE :search OR anzsco_code LIKE :search)")
+            params["search"] = f"%{search}%"
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        result = await db.execute(text(f"""
+            SELECT anzsco_code, occupation, state,
+                   prob_2026, prob_2027, prob_2028, prob_2029, prob_2030
+            FROM shortage_forecast
+            {where}
+            ORDER BY {sort_col} DESC
+            LIMIT :limit
+        """), params)
+        rows = result.fetchall()
+
+        records = [
+            {
+                "anzsco_code": r[0],
+                "occupation":  r[1],
+                "state":       r[2],
+                "prob_2026":   round(r[3], 4),
+                "prob_2027":   round(r[4], 4),
+                "prob_2028":   round(r[5], 4),
+                "prob_2029":   round(r[6], 4),
+                "prob_2030":   round(r[7], 4),
+            }
+            for r in rows
+        ]
+        data = {
+            "source":    "ml_model",   # ✅ real — NOT mock
+            "model":     "RandomForest — shortage_forecast table",
+            "state":     state or "all",
+            "sort_year": sort_year,
+            "total":     len(records),
+            "records":   records,
+        }
+    except Exception as e:
+        data = {"source": "error", "error": str(e), "records": []}
+
+    await set_cache(cache_key, json.dumps(data), ttl=3600)
+    return data
+
+
+@router.get("/shortage-forecast/{anzsco_code}")
+async def get_shortage_forecast_by_code(
+    anzsco_code: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    5-year ML shortage forecast for one ANZSCO code across all states.
+    Used by Occupation Detail → Projection tab.
+    ✅ REAL DATA — not mock.
+    """
+    cache_key = f"data:shortage_forecast_code:{anzsco_code}"
+    cached = await get_cache(cache_key)
+    if cached:
+        return JSONResponse(json.loads(cached))
+
+    try:
+        result = await db.execute(text("""
+            SELECT anzsco_code, occupation, state,
+                   prob_2026, prob_2027, prob_2028, prob_2029, prob_2030
+            FROM shortage_forecast
+            WHERE anzsco_code = :code
+            ORDER BY prob_2026 DESC
+        """), {"code": anzsco_code})
+        rows = result.fetchall()
+
+        records = [
+            {
+                "state":     r[2],
+                "prob_2026": round(r[3], 4),
+                "prob_2027": round(r[4], 4),
+                "prob_2028": round(r[5], 4),
+                "prob_2029": round(r[6], 4),
+                "prob_2030": round(r[7], 4),
+            }
+            for r in rows
+        ]
+        data = {
+            "source":      "ml_model",
+            "anzsco_code": anzsco_code,
+            "occupation":  rows[0][1] if rows else None,
+            "records":     records,
+        }
+    except Exception as e:
+        data = {"source": "error", "anzsco_code": anzsco_code, "error": str(e), "records": []}
+
+    await set_cache(cache_key, json.dumps(data), ttl=3600)
+    return data
+
+
 # ── /api/data/report ─────────────────────────────────────────
 @router.get("/report")
 async def get_report(

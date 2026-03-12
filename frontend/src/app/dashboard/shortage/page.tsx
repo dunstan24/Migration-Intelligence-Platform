@@ -1,15 +1,17 @@
 "use client";
 /**
- * Shortage Analysis Page
+ * Shortage Analysis Page — fully redesigned
  * Route: /dashboard/shortage
- * Data: GET /api/data/shortage-heatmap + /api/data/osl-trend
+ * All data REAL — OSL 2021–2025 + ML forecast 2026–2030
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   BarChart,
   Bar,
   LineChart,
   Line,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -17,167 +19,819 @@ import {
   ResponsiveContainer,
   Cell,
   Legend,
+  ReferenceLine,
 } from "recharts";
 import { C, Card, ChartTip, PageWrapper } from "@/components/ui";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+const pct = (n: number) => `${(n * 100).toFixed(0)}%`;
 const fmt = (n: number) => n?.toLocaleString() ?? "—";
 
 const STATES = ["NSW", "VIC", "QLD", "SA", "WA", "TAS", "NT", "ACT"];
+const YEARS = ["2026", "2027", "2028", "2029", "2030"];
+const SKILL_COLORS = ["#2a8bff", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
 const STATE_COLORS: Record<string, string> = {
-  NSW: C.blue,
-  VIC: C.purple,
-  QLD: C.amber,
-  SA: C.red,
-  WA: C.green,
-  TAS: C.cyan,
+  NSW: "#2a8bff",
+  VIC: "#8b5cf6",
+  QLD: "#f59e0b",
+  SA: "#ef4444",
+  WA: "#10b981",
+  TAS: "#06b6d4",
   NT: "#f97316",
   ACT: "#ec4899",
 };
-const SKILL_COLORS = [C.blue, C.green, C.amber, C.red, C.purple];
 
-function SectionHeader({
-  title,
-  color = C.blue,
+function probColor(p: number) {
+  return p >= 0.65 ? "#ef4444" : p >= 0.4 ? "#f59e0b" : "#10b981";
+}
+
+// ── Shared UI ────────────────────────────────────────────────────
+
+function KpiCard({
+  label,
+  value,
+  sub,
+  color,
 }: {
-  title: string;
-  color?: string;
+  label: string;
+  value: string | number;
+  sub?: string;
+  color: string;
 }) {
   return (
     <div
       style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        marginBottom: 14,
+        background: C.surface,
+        border: `1px solid ${C.border}`,
+        borderRadius: 10,
+        padding: "16px 20px",
+        borderTop: `3px solid ${color}`,
       }}
     >
-      <div
-        style={{ width: 3, height: 16, background: color, borderRadius: 2 }}
-      />
-      <p style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{title}</p>
+      <p
+        style={{
+          fontSize: 10,
+          color: C.muted,
+          textTransform: "uppercase",
+          letterSpacing: "0.08em",
+          fontWeight: 700,
+          marginBottom: 6,
+        }}
+      >
+        {label}
+      </p>
+      <p style={{ fontSize: 26, fontWeight: 800, color, lineHeight: 1 }}>
+        {value}
+      </p>
+      {sub && (
+        <p style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>{sub}</p>
+      )}
     </div>
   );
 }
 
-export default function ShortageAnalysis() {
-  const [trend, setTrend] = useState<any>(null);
-  const [heatmap, setHeatmap] = useState<any>(null);
-  const [year, setYear] = useState(2025);
-  const [search, setSearch] = useState("");
-  const [skillFilter, setSkill] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    Promise.all([
-      fetch(`${API}/api/data/osl-trend`).then((r) => r.json()),
-      fetch(`${API}/api/data/shortage-heatmap?year=${year}`).then((r) =>
-        r.json(),
-      ),
-    ]).then(([t, h]) => {
-      setTrend(t);
-      setHeatmap(h);
-      setLoading(false);
-    });
-  }, []);
-
-  useEffect(() => {
-    setLoading(true);
-    fetch(`${API}/api/data/shortage-heatmap?year=${year}`)
-      .then((r) => r.json())
-      .then((h) => {
-        setHeatmap(h);
-        setLoading(false);
-      });
-  }, [year]);
-
-  const filtered = (heatmap?.records || []).filter((r: any) => {
-    const matchSearch =
-      !search ||
-      r.occupation_name.toLowerCase().includes(search.toLowerCase()) ||
-      r.anzsco_code.includes(search);
-    const matchSkill = !skillFilter || r.skill_level === skillFilter;
-    return matchSearch && matchSkill;
-  });
-
-  const nationalShortage = filtered.filter((r: any) => r.national === 1);
-  const noShortage = filtered.filter((r: any) => r.national === 0);
-
+function Pill({
+  label,
+  active,
+  color,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  color: string;
+  onClick: () => void;
+}) {
   return (
-    <PageWrapper>
-      {/* ── Header ────────────────────────────────────────── */}
-      <div style={{ marginBottom: 24 }}>
-        <h1
-          style={{
-            fontSize: 22,
-            fontWeight: 800,
-            color: "#f9fafb",
-            marginBottom: 4,
-          }}
-        >
-          Occupation Shortage List
-        </h1>
-        <p style={{ fontSize: 13, color: C.muted }}>
-          National & State shortage ratings 2021–2025 · Source: DESE OSL
-        </p>
-      </div>
+    <button
+      onClick={onClick}
+      style={{
+        padding: "5px 13px",
+        borderRadius: 20,
+        fontSize: 11,
+        cursor: "pointer",
+        fontWeight: active ? 700 : 400,
+        border: `1px solid ${active ? color : C.border}`,
+        background: active ? `${color}20` : "transparent",
+        color: active ? color : C.muted,
+      }}
+    >
+      {label}
+    </button>
+  );
+}
 
-      {/* ── KPI Row ───────────────────────────────────────── */}
-      <div
+function SectionTitle({ title, sub }: { title: string; sub?: string }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <p
         style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
-          gap: 12,
-          marginBottom: 24,
+          fontSize: 13,
+          fontWeight: 700,
+          color: C.text,
+          marginBottom: 2,
         }}
       >
-        {[
-          {
-            label: "Total Occupations",
-            value: fmt(heatmap?.total_occupations),
-            color: C.blue,
-          },
-          {
-            label: "National Shortage",
-            value: fmt(heatmap?.national_shortage_count),
-            color: C.red,
-          },
-          {
-            label: "Shortage Rate",
-            value: `${heatmap?.national_shortage_pct ?? "—"}%`,
-            color: C.amber,
-          },
-          { label: "Year", value: year, color: C.purple },
-        ].map((k) => (
-          <div
-            key={k.label}
-            style={{
-              background: C.surface,
-              border: `1px solid ${C.border}`,
-              borderRadius: 10,
-              padding: "16px",
-            }}
-          >
-            <p
+        {title}
+      </p>
+      {sub && <p style={{ fontSize: 10, color: C.muted }}>{sub}</p>}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// TAB A — ML FORECAST 2026–2030
+// ══════════════════════════════════════════════════════════════════
+
+function ForecastTab() {
+  const [state, setState] = useState("NSW");
+  const [sortYr, setSortYr] = useState("2026");
+  const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [data, setData] = useState<any>(null);
+  const [searchData, setSearchData] = useState<any>(null); // cross-state search results
+  const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState("");
+
+  // Fetch by state (default view)
+  useEffect(() => {
+    setLoading(true);
+    setError("");
+    fetch(
+      `${API}/api/data/shortage-forecast?state=${state}&limit=200&sort_year=${sortYr}`,
+    )
+      .then((r) => r.json())
+      .then((d) => {
+        setData(d);
+        setLoading(false);
+      })
+      .catch((e) => {
+        setError(e.message);
+        setLoading(false);
+      });
+  }, [state, sortYr]);
+
+  // Cross-state search — fetches all states when user searches
+  useEffect(() => {
+    if (!search) {
+      setSearchData(null);
+      return;
+    }
+    setSearching(true);
+    fetch(
+      `${API}/api/data/shortage-forecast?limit=500&sort_year=${sortYr}&search=${encodeURIComponent(search)}`,
+    )
+      .then((r) => r.json())
+      .then((d) => {
+        setSearchData(d);
+        setSearching(false);
+      })
+      .catch(() => setSearching(false));
+  }, [search, sortYr]);
+
+  // Debounce search input
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput), 350);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  // Which records to show
+  const records: any[] = useMemo(() => {
+    if (search && searchData) return searchData.records || [];
+    return data?.records || [];
+  }, [data, searchData, search]);
+
+  const isSearchMode = !!(search && searchData);
+
+  const trendData = YEARS.map((y) => ({
+    year: y,
+    avg: records.length
+      ? +(
+          records.reduce((s: number, r: any) => s + (r[`prob_${y}`] ?? 0), 0) /
+          records.length
+        ).toFixed(3)
+      : 0,
+    high: records.filter((r: any) => (r[`prob_${y}`] ?? 0) >= 0.65).length,
+  }));
+
+  const top10 = records.slice(0, 10);
+
+  if (error)
+    return (
+      <Card>
+        <p style={{ color: "#ef4444", fontSize: 12 }}>
+          Could not load forecast. Run:{" "}
+          <code style={{ fontFamily: "monospace" }}>
+            python pipelines/ingestors/shortage_forecast_ingestor.py
+          </code>
+        </p>
+      </Card>
+    );
+
+  return (
+    <>
+      {/* ── Controls ─────────────────────────────────────────── */}
+      <div
+        style={{
+          background: C.surface,
+          border: `1px solid ${C.border}`,
+          borderRadius: 10,
+          padding: "14px 16px",
+          marginBottom: 16,
+        }}
+      >
+        {/* Search bar — prominent at top */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ position: "relative" as const }}>
+            <span
               style={{
-                fontSize: 10,
+                position: "absolute" as const,
+                left: 14,
+                top: "50%",
+                transform: "translateY(-50%)",
                 color: C.muted,
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-                fontWeight: 700,
-                marginBottom: 6,
+                fontSize: 14,
               }}
             >
-              {k.label}
-            </p>
-            <p style={{ fontSize: 24, fontWeight: 800, color: k.color }}>
-              {k.value}
-            </p>
+              🔍
+            </span>
+            <input
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search occupation name or ANZSCO code across all states…"
+              style={{
+                width: "100%",
+                padding: "9px 14px 9px 38px",
+                borderRadius: 8,
+                fontSize: 12,
+                border: `1px solid ${search ? C.cyan : C.border}`,
+                background: "#0d1117",
+                color: C.text,
+                outline: "none",
+                boxSizing: "border-box" as const,
+              }}
+            />
+            {searchInput && (
+              <button
+                onClick={() => {
+                  setSearchInput("");
+                  setSearch("");
+                }}
+                style={{
+                  position: "absolute" as const,
+                  right: 12,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "none",
+                  border: "none",
+                  color: C.muted,
+                  cursor: "pointer",
+                  fontSize: 16,
+                }}
+              >
+                ×
+              </button>
+            )}
           </div>
-        ))}
+          {search && (
+            <p style={{ fontSize: 10, color: C.cyan, marginTop: 4 }}>
+              {searching
+                ? "Searching all states…"
+                : `Showing results for "${search}" across all states`}
+            </p>
+          )}
+        </div>
+
+        {/* State + year pills — dimmed during search mode */}
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+            alignItems: "center",
+            opacity: isSearchMode ? 0.4 : 1,
+          }}
+        >
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {STATES.map((s) => (
+              <Pill
+                key={s}
+                label={s}
+                active={state === s}
+                color={STATE_COLORS[s]}
+                onClick={() => {
+                  setState(s);
+                  setSearchInput("");
+                }}
+              />
+            ))}
+          </div>
+          <div
+            style={{
+              width: 1,
+              height: 18,
+              background: C.border,
+              margin: "0 4px",
+            }}
+          />
+          <div style={{ display: "flex", gap: 4 }}>
+            {YEARS.map((y) => (
+              <Pill
+                key={y}
+                label={y}
+                active={sortYr === y}
+                color={C.cyan}
+                onClick={() => setSortYr(y)}
+              />
+            ))}
+          </div>
+          {isSearchMode && (
+            <span style={{ fontSize: 10, color: C.amber, marginLeft: 4 }}>
+              ← State filter disabled during search
+            </span>
+          )}
+        </div>
       </div>
 
-      {/* ── Charts Row ────────────────────────────────────── */}
+      {loading && !isSearchMode ? (
+        <div
+          style={{
+            textAlign: "center",
+            padding: 60,
+            color: C.muted,
+            fontSize: 12,
+          }}
+        >
+          Loading forecast data…
+        </div>
+      ) : (
+        <>
+          {/* Charts row — hide when searching a specific occupation */}
+          {!isSearchMode && (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 16,
+                marginBottom: 16,
+              }}
+            >
+              {/* Top 10 highest risk occupations 
+              <Card>
+                <SectionTitle
+                  title={`Top 10 Highest Risk — ${state}, ${sortYr}`}
+                  sub="Probability of being on shortage list · hover for exact value"
+                />
+                <ResponsiveContainer width="100%" height={248}>
+                  <BarChart
+                    data={top10}
+                    layout="vertical"
+                    margin={{ left: 0, right: 52, top: 0, bottom: 0 }}
+                  >
+                    <XAxis
+                      type="number"
+                      domain={[0, 1]}
+                      tickFormatter={(v) => `${(v * 100).toFixed(0)}%`}
+                      tick={{ fontSize: 9, fill: C.muted }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="occupation"
+                      width={180}
+                      tick={{ fontSize: 8, fill: C.text }}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={(v: string) =>
+                        v.length > 26 ? v.slice(0, 24) + "…" : v
+                      }
+                    />
+                    <Tooltip
+                      formatter={(v: any) => [
+                        `${(+v * 100).toFixed(1)}%`,
+                        "Shortage Probability",
+                      ]}
+                      contentStyle={{
+                        background: C.surface,
+                        border: `1px solid ${C.border}`,
+                        borderRadius: 6,
+                        fontSize: 11,
+                      }}
+                    />
+                    <ReferenceLine
+                      x={0.65}
+                      stroke="#ef444450"
+                      strokeDasharray="4 3"
+                    />
+                    <ReferenceLine
+                      x={0.4}
+                      stroke="#f59e0b50"
+                      strokeDasharray="4 3"
+                    />
+                    <Bar dataKey={`prob_${sortYr}`} radius={[0, 4, 4, 0]}>
+                      {top10.map((r: any, i: number) => (
+                        <Cell
+                          key={i}
+                          fill={probColor(r[`prob_${sortYr}`] ?? 0)}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </Card>
+
+              <Card>
+                <SectionTitle
+                  title={`Shortage Trajectory — ${state}`}
+                  sub="Average probability and high-risk count 2026–2030"
+                />
+                <ResponsiveContainer width="100%" height={248}>
+                  <AreaChart
+                    data={trendData}
+                    margin={{ top: 4, right: 8, bottom: 0, left: -10 }}
+                  >
+                    <defs>
+                      <linearGradient id="pGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop
+                          offset="5%"
+                          stopColor={C.purple}
+                          stopOpacity={0.3}
+                        />
+                        <stop
+                          offset="95%"
+                          stopColor={C.purple}
+                          stopOpacity={0}
+                        />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                    <XAxis
+                      dataKey="year"
+                      tick={{ fontSize: 10, fill: C.muted }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      yAxisId="l"
+                      domain={[0, 0.6]}
+                      tickFormatter={(v) => `${(v * 100).toFixed(0)}%`}
+                      tick={{ fontSize: 9, fill: C.muted }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      yAxisId="r"
+                      orientation="right"
+                      tick={{ fontSize: 9, fill: C.muted }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip
+                      formatter={(v: any, name: string) => [
+                        name === "avg"
+                          ? `${(+v * 100).toFixed(1)}%`
+                          : String(v),
+                        name === "avg" ? "Avg Probability" : "High Risk Count",
+                      ]}
+                      contentStyle={{
+                        background: C.surface,
+                        border: `1px solid ${C.border}`,
+                        borderRadius: 6,
+                        fontSize: 11,
+                      }}
+                    />
+                    <Area
+                      yAxisId="l"
+                      type="monotone"
+                      dataKey="avg"
+                      stroke={C.purple}
+                      fill="url(#pGrad)"
+                      strokeWidth={2}
+                      dot={{ r: 4, fill: C.purple }}
+                      name="avg"
+                    />
+                    <Bar
+                      yAxisId="r"
+                      dataKey="high"
+                      fill={`${C.red}35`}
+                      radius={[2, 2, 0, 0]}
+                      name="high"
+                    />
+                    <Legend wrapperStyle={{ fontSize: 10, color: C.muted }} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </Card>
+              */}
+            </div>
+          )}
+
+          {/* Search result: occupation across all states as line chart */}
+          {isSearchMode && records.length > 0 && (
+            <Card style={{ marginBottom: 16 }}>
+              <SectionTitle
+                title={`"${records[0]?.occupation}" — All States, 2026–2030`}
+                sub={`ANZSCO ${records[0]?.anzsco_code} · Shortage probability per state · Source: ML model (RandomForest)`}
+              />
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart
+                  margin={{ top: 4, right: 16, bottom: 0, left: -10 }}
+                  data={YEARS.map((y) => {
+                    const point: any = { year: y };
+                    records.forEach((r: any) => {
+                      point[r.state] = r[`prob_${y}`] ?? 0;
+                    });
+                    return point;
+                  })}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                  <XAxis
+                    dataKey="year"
+                    tick={{ fontSize: 10, fill: C.muted }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    domain={[0, 1]}
+                    tickFormatter={(v) => `${(v * 100).toFixed(0)}%`}
+                    tick={{ fontSize: 9, fill: C.muted }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip
+                    formatter={(v: any, name: string) => [
+                      `${(+v * 100).toFixed(1)}%`,
+                      name,
+                    ]}
+                    contentStyle={{
+                      background: C.surface,
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 6,
+                      fontSize: 11,
+                    }}
+                  />
+                  <ReferenceLine
+                    y={0.65}
+                    stroke="#ef444450"
+                    strokeDasharray="4 3"
+                    label={{ value: "High risk", fill: "#ef4444", fontSize: 9 }}
+                  />
+                  <ReferenceLine
+                    y={0.4}
+                    stroke="#f59e0b50"
+                    strokeDasharray="4 3"
+                    label={{ value: "Med risk", fill: "#f59e0b", fontSize: 9 }}
+                  />
+                  {records.map((r: any) => (
+                    <Line
+                      key={r.state}
+                      type="monotone"
+                      dataKey={r.state}
+                      stroke={STATE_COLORS[r.state] || C.muted}
+                      strokeWidth={2}
+                      dot={{ r: 4, fill: STATE_COLORS[r.state] || C.muted }}
+                    />
+                  ))}
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </Card>
+          )}
+
+          {/* Full table */}
+          <Card>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 12,
+              }}
+            >
+              <SectionTitle
+                title={
+                  isSearchMode
+                    ? `Search results for "${search}"`
+                    : "All Occupations — 5-Year Forecast"
+                }
+                sub={
+                  isSearchMode
+                    ? `${records.length} result(s) across all states · sorted by ${sortYr}`
+                    : `${records.length} occupations · ${state} · sorted by ${sortYr}`
+                }
+              />
+              <div style={{ display: "flex", gap: 14 }}>
+                {[
+                  ["High ≥65%", "#ef4444"],
+                  ["Med 40–65%", "#f59e0b"],
+                  ["Low <40%", "#10b981"],
+                ].map(([l, c]) => (
+                  <div
+                    key={l}
+                    style={{ display: "flex", alignItems: "center", gap: 5 }}
+                  >
+                    <div
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 2,
+                        background: c,
+                      }}
+                    />
+                    <span style={{ fontSize: 10, color: C.muted }}>{l}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Header */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: isSearchMode
+                  ? "68px 1fr 44px 52px 52px 52px 52px 52px 60px"
+                  : "68px 1fr 52px 52px 52px 52px 52px 60px",
+                gap: 6,
+                padding: "6px 12px",
+                borderBottom: `1px solid ${C.border}`,
+                marginBottom: 2,
+              }}
+            >
+              {[
+                "Code",
+                "Occupation",
+                ...(isSearchMode ? ["State"] : []),
+                ...YEARS,
+                "Trend",
+              ].map((h) => (
+                <span
+                  key={h}
+                  style={{
+                    fontSize: 9,
+                    fontWeight: 700,
+                    textTransform: "uppercase" as const,
+                    letterSpacing: "0.06em",
+                    color: h === sortYr ? C.cyan : C.muted,
+                  }}
+                >
+                  {h}
+                  {h === sortYr ? " ▼" : ""}
+                </span>
+              ))}
+            </div>
+
+            {/* Rows */}
+            <div style={{ maxHeight: 460, overflowY: "auto" }}>
+              {searching ? (
+                <p
+                  style={{
+                    textAlign: "center",
+                    color: C.muted,
+                    padding: 24,
+                    fontSize: 12,
+                  }}
+                >
+                  Searching…
+                </p>
+              ) : records.length === 0 ? (
+                <p
+                  style={{
+                    textAlign: "center",
+                    color: C.muted,
+                    padding: 24,
+                    fontSize: 12,
+                  }}
+                >
+                  {search ? `No results for "${search}"` : "No data"}
+                </p>
+              ) : (
+                records.map((r: any, i: number) => {
+                  const probs = YEARS.map((y) => r[`prob_${y}`] ?? 0);
+                  const sp = r[`prob_${sortYr}`] ?? 0;
+                  const delta = probs[4] - probs[0];
+                  const arrow = delta > 0.05 ? "↑" : delta < -0.05 ? "↓" : "→";
+                  const arrowC =
+                    delta > 0.05
+                      ? "#ef4444"
+                      : delta < -0.05
+                        ? "#10b981"
+                        : C.muted;
+                  const cols = isSearchMode
+                    ? "68px 1fr 44px 52px 52px 52px 52px 52px 60px"
+                    : "68px 1fr 52px 52px 52px 52px 52px 60px";
+                  return (
+                    <div
+                      key={`${r.anzsco_code}-${r.state}-${i}`}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: cols,
+                        gap: 6,
+                        padding: "6px 12px",
+                        borderRadius: 5,
+                        alignItems: "center",
+                        background: i % 2 === 0 ? "transparent" : "#0a0e18",
+                        borderLeft:
+                          sp >= 0.65
+                            ? "2px solid #ef4444"
+                            : sp >= 0.4
+                              ? "2px solid #f59e0b"
+                              : "2px solid transparent",
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 10,
+                          color: C.muted,
+                          fontFamily: "monospace",
+                        }}
+                      >
+                        {r.anzsco_code}
+                      </span>
+                      <span
+                        style={{ fontSize: 11, color: C.text, lineHeight: 1.3 }}
+                      >
+                        {r.occupation}
+                      </span>
+                      {isSearchMode && (
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: STATE_COLORS[r.state] || C.muted,
+                          }}
+                        >
+                          {r.state}
+                        </span>
+                      )}
+                      {probs.map((p, yi) => {
+                        const isSortCol = YEARS[yi] === sortYr;
+                        return (
+                          <span
+                            key={yi}
+                            style={{
+                              fontSize: 11,
+                              fontWeight: isSortCol ? 800 : 400,
+                              color: probColor(p),
+                              background: isSortCol
+                                ? `${probColor(p)}18`
+                                : "transparent",
+                              borderRadius: 4,
+                              padding: isSortCol ? "1px 4px" : 0,
+                              textAlign: "center" as const,
+                            }}
+                          >
+                            {pct(p)}
+                          </span>
+                        );
+                      })}
+                      <span
+                        style={{
+                          fontSize: 14,
+                          fontWeight: 700,
+                          color: arrowC,
+                          textAlign: "center" as const,
+                        }}
+                      >
+                        {arrow}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </Card>
+        </>
+      )}
+    </>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// TAB B — HISTORICAL OSL 2021–2025
+// ══════════════════════════════════════════════════════════════════
+
+function HistoricalTab({ trend, heatmap, year, setYear }: any) {
+  const [search, setSearch] = useState("");
+  const [skillF, setSkillF] = useState<number | null>(null);
+
+  const records = useMemo(() => {
+    return (heatmap?.records || []).filter((r: any) => {
+      const q = search.toLowerCase();
+      return (
+        (!search ||
+          r.occupation_name.toLowerCase().includes(q) ||
+          r.anzsco_code.includes(q)) &&
+        (!skillF || r.skill_level === skillF)
+      );
+    });
+  }, [heatmap, search, skillF]);
+
+  const shortage = records.filter((r: any) => r.national === 1).length;
+  const noList = records.filter((r: any) => r.national === 0).length;
+
+  return (
+    <>
+      {/* Charts */}
       <div
         style={{
           display: "grid",
@@ -186,17 +840,22 @@ export default function ShortageAnalysis() {
           marginBottom: 20,
         }}
       >
-        {/* National shortage trend */}
         <Card>
-          <SectionHeader
-            title="National Shortage Trend 2021–2025"
-            color={C.red}
+          <SectionTitle
+            title="National Shortage Count 2021–2025"
+            sub="Occupations on the national shortage list"
           />
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart
+          <ResponsiveContainer width="100%" height={200}>
+            <AreaChart
               data={trend?.yearly_trend || []}
               margin={{ top: 4, right: 8, bottom: 0, left: -10 }}
             >
+              <defs>
+                <linearGradient id="rGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#ef4444" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                </linearGradient>
+              </defs>
               <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
               <XAxis
                 dataKey="year"
@@ -210,31 +869,25 @@ export default function ShortageAnalysis() {
                 tickLine={false}
               />
               <Tooltip content={<ChartTip />} />
-              <Line
+              <Area
                 type="monotone"
                 dataKey="national"
                 name="National Shortage"
-                stroke={C.red}
+                stroke="#ef4444"
+                fill="url(#rGrad)"
                 strokeWidth={2}
-                dot={{ r: 4, fill: C.red }}
+                dot={{ r: 4, fill: "#ef4444" }}
               />
-              <Line
-                type="monotone"
-                dataKey="total"
-                name="Total Occupations"
-                stroke={C.muted}
-                strokeWidth={1}
-                strokeDasharray="4 4"
-                dot={false}
-              />
-            </LineChart>
+            </AreaChart>
           </ResponsiveContainer>
         </Card>
 
-        {/* State shortage counts */}
         <Card>
-          <SectionHeader title={`Shortage by State — ${year}`} color={C.blue} />
-          <ResponsiveContainer width="100%" height={220}>
+          <SectionTitle
+            title={`Shortage by State — ${year}`}
+            sub="Number of shortage occupations per state"
+          />
+          <ResponsiveContainer width="100%" height={200}>
             <BarChart
               data={STATES.map((s) => ({
                 state: s,
@@ -255,11 +908,7 @@ export default function ShortageAnalysis() {
                 tickLine={false}
               />
               <Tooltip content={<ChartTip />} />
-              <Bar
-                dataKey="count"
-                name="Shortage Occupations"
-                radius={[4, 4, 0, 0]}
-              >
+              <Bar dataKey="count" name="Shortage Count" radius={[4, 4, 0, 0]}>
                 {STATES.map((s) => (
                   <Cell key={s} fill={STATE_COLORS[s]} />
                 ))}
@@ -268,18 +917,17 @@ export default function ShortageAnalysis() {
           </ResponsiveContainer>
         </Card>
 
-        {/* Skill level breakdown */}
         <Card>
-          <SectionHeader
+          <SectionTitle
             title="Shortage by Skill Level — 2025"
-            color={C.purple}
+            sub="Proportion of each skill level on shortage list"
           />
           <div
             style={{
               display: "flex",
               flexDirection: "column",
-              gap: 10,
-              marginTop: 4,
+              gap: 12,
+              marginTop: 8,
             }}
           >
             {(trend?.skill_breakdown || []).map((s: any, i: number) => (
@@ -314,11 +962,11 @@ export default function ShortageAnalysis() {
                       color: SKILL_COLORS[i],
                     }}
                   >
-                    {s.shortage}/{s.total} ({s.pct}%)
+                    {s.shortage}/{s.total} · {s.pct}%
                   </span>
                 </div>
                 <div
-                  style={{ height: 5, background: C.border, borderRadius: 3 }}
+                  style={{ height: 6, background: C.border, borderRadius: 3 }}
                 >
                   <div
                     style={{
@@ -334,13 +982,12 @@ export default function ShortageAnalysis() {
           </div>
         </Card>
 
-        {/* State trend lines */}
         <Card>
-          <SectionHeader
+          <SectionTitle
             title="State Shortage Trend 2021–2025"
-            color={C.cyan}
+            sub="NSW · VIC · QLD · WA"
           />
-          <ResponsiveContainer width="100%" height={220}>
+          <ResponsiveContainer width="100%" height={200}>
             <LineChart
               data={trend?.yearly_trend || []}
               margin={{ top: 4, right: 8, bottom: 0, left: -10 }}
@@ -369,189 +1016,95 @@ export default function ShortageAnalysis() {
                   dot={false}
                 />
               ))}
-              <Legend wrapperStyle={{ fontSize: 11, color: C.muted }} />
+              <Legend wrapperStyle={{ fontSize: 10, color: C.muted }} />
             </LineChart>
           </ResponsiveContainer>
         </Card>
       </div>
 
-      {/* ── Filters ───────────────────────────────────────── */}
+      {/* Filters */}
       <div
         style={{
           display: "flex",
-          gap: 10,
-          marginBottom: 16,
+          gap: 8,
+          marginBottom: 14,
           flexWrap: "wrap",
           alignItems: "center",
         }}
       >
-        {/* Year selector */}
         <div style={{ display: "flex", gap: 4 }}>
           {[2021, 2022, 2023, 2024, 2025].map((y) => (
-            <button
+            <Pill
               key={y}
+              label={String(y)}
+              active={y === year}
+              color={C.blue}
               onClick={() => setYear(y)}
-              style={{
-                padding: "6px 14px",
-                borderRadius: 6,
-                border: `1px solid ${y === year ? C.blue : C.border}`,
-                background: y === year ? `${C.blue}20` : "transparent",
-                color: y === year ? C.blue : C.muted,
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              {y}
-            </button>
+            />
           ))}
         </div>
-
-        {/* Search */}
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search occupation..."
+          placeholder="Search occupation…"
           style={{
-            padding: "7px 12px",
-            borderRadius: 6,
+            padding: "6px 14px",
+            borderRadius: 20,
+            fontSize: 11,
+            outline: "none",
+            width: 200,
             border: `1px solid ${C.border}`,
             background: C.surface,
             color: C.text,
-            fontSize: 12,
-            width: 220,
-            outline: "none",
           }}
         />
-
-        {/* Skill filter */}
         <div style={{ display: "flex", gap: 4 }}>
-          <button
-            onClick={() => setSkill(null)}
-            style={{
-              padding: "6px 12px",
-              borderRadius: 6,
-              border: `1px solid ${!skillFilter ? C.purple : C.border}`,
-              background: !skillFilter ? `${C.purple}20` : "transparent",
-              color: !skillFilter ? C.purple : C.muted,
-              fontSize: 11,
-              cursor: "pointer",
-            }}
-          >
-            All Levels
-          </button>
+          <Pill
+            label="All"
+            active={!skillF}
+            color={C.purple}
+            onClick={() => setSkillF(null)}
+          />
           {[1, 2, 3, 4, 5].map((l) => (
-            <button
+            <Pill
               key={l}
-              onClick={() => setSkill(skillFilter === l ? null : l)}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 6,
-                border: `1px solid ${skillFilter === l ? SKILL_COLORS[l - 1] : C.border}`,
-                background:
-                  skillFilter === l
-                    ? `${SKILL_COLORS[l - 1]}20`
-                    : "transparent",
-                color: skillFilter === l ? SKILL_COLORS[l - 1] : C.muted,
-                fontSize: 11,
-                cursor: "pointer",
-              }}
-            >
-              L{l}
-            </button>
+              label={`L${l}`}
+              active={skillF === l}
+              color={SKILL_COLORS[l - 1]}
+              onClick={() => setSkillF(skillF === l ? null : l)}
+            />
           ))}
         </div>
-
         <span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>
-          {nationalShortage.length} shortage · {noShortage.length} no shortage
+          {shortage} shortage · {noList} not on list
         </span>
       </div>
 
-      {/* ── Top 20 shortage occupations ───────────────────── */}
-      <Card style={{ marginBottom: 16 }}>
-        <SectionHeader
-          title="Top Shortage Occupations — 2025 (National)"
-          color={C.red}
-        />
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
-            gap: 8,
-          }}
-        >
-          {(trend?.top_shortages_2025 || []).slice(0, 12).map((r: any) => (
-            <div
-              key={r.anzsco_code}
-              style={{
-                padding: "10px 14px",
-                background: `${C.red}08`,
-                border: `1px solid ${C.red}25`,
-                borderRadius: 8,
-                borderLeft: `3px solid ${SKILL_COLORS[r.skill_level - 1] || C.muted}`,
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  marginBottom: 4,
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: 10,
-                    color: C.muted,
-                    fontFamily: "monospace",
-                  }}
-                >
-                  {r.anzsco_code}
-                </span>
-                <span style={{ fontSize: 10, fontWeight: 700, color: C.red }}>
-                  {r.shortage_state_count} states
-                </span>
-              </div>
-              <p
-                style={{
-                  fontSize: 11,
-                  color: C.text,
-                  fontWeight: 600,
-                  lineHeight: 1.3,
-                }}
-              >
-                {r.occupation_name}
-              </p>
-              <p style={{ fontSize: 10, color: C.muted, marginTop: 3 }}>
-                Skill Level {r.skill_level}
-              </p>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      {/* ── Full table ────────────────────────────────────── */}
+      {/* OSL Table */}
       <Card>
-        <SectionHeader title={`All Occupations — ${year}`} color={C.blue} />
-
-        {/* Table header */}
+        <SectionTitle
+          title={`Occupation Shortage List — ${year}`}
+          sub={`${records.length} occupations · ● = on shortage list`}
+        />
         <div
           style={{
             display: "grid",
             gridTemplateColumns:
-              "100px 1fr 60px 50px 50px 50px 50px 50px 50px 50px 50px 60px",
-            gap: 6,
+              "96px 1fr 50px 42px 42px 42px 42px 42px 42px 42px 42px 50px",
+            gap: 4,
             padding: "6px 10px",
-            marginBottom: 4,
+            borderBottom: `1px solid ${C.border}`,
+            marginBottom: 2,
           }}
         >
-          {["ANZSCO", "Occupation", "Level", "NAT", ...STATES].map((h) => (
+          {["ANZSCO", "Occupation", "Skill", "NAT", ...STATES].map((h) => (
             <span
               key={h}
               style={{
                 fontSize: 9,
-                color: "#374151",
+                color: C.muted,
                 fontWeight: 700,
-                textTransform: "uppercase",
+                textTransform: "uppercase" as const,
                 letterSpacing: "0.06em",
               }}
             >
@@ -559,21 +1112,8 @@ export default function ShortageAnalysis() {
             </span>
           ))}
         </div>
-
-        {/* Shortage rows */}
         <div style={{ maxHeight: 500, overflowY: "auto" }}>
-          {loading ? (
-            <p
-              style={{
-                textAlign: "center",
-                color: C.muted,
-                padding: 20,
-                fontSize: 12,
-              }}
-            >
-              Loading...
-            </p>
-          ) : filtered.length === 0 ? (
+          {records.length === 0 ? (
             <p
               style={{
                 textAlign: "center",
@@ -585,18 +1125,22 @@ export default function ShortageAnalysis() {
               No results
             </p>
           ) : (
-            filtered.map((r: any, i: number) => (
+            records.map((r: any, i: number) => (
               <div
                 key={r.anzsco_code}
                 style={{
                   display: "grid",
                   gridTemplateColumns:
-                    "100px 1fr 60px 50px 50px 50px 50px 50px 50px 50px 50px 60px",
-                  gap: 6,
-                  padding: "7px 10px",
-                  borderRadius: 6,
+                    "96px 1fr 50px 42px 42px 42px 42px 42px 42px 42px 42px 50px",
+                  gap: 4,
+                  padding: "6px 10px",
+                  borderRadius: 5,
                   alignItems: "center",
                   background: i % 2 === 0 ? "transparent" : "#0a0e18",
+                  borderLeft:
+                    r.national === 1
+                      ? "2px solid #ef444460"
+                      : "2px solid transparent",
                 }}
               >
                 <span
@@ -614,32 +1158,30 @@ export default function ShortageAnalysis() {
                 <span
                   style={{
                     fontSize: 10,
-                    color: SKILL_COLORS[r.skill_level - 1] || C.muted,
                     fontWeight: 700,
+                    color: SKILL_COLORS[r.skill_level - 1] || C.muted,
                   }}
                 >
                   L{r.skill_level}
                 </span>
-                {/* National */}
                 <span
                   style={{
-                    fontSize: 11,
-                    fontWeight: 700,
-                    color: r.national === 1 ? C.red : "#1f2937",
-                    textAlign: "center",
+                    fontSize: 12,
+                    fontWeight: 800,
+                    textAlign: "center" as const,
+                    color: r.national === 1 ? "#ef4444" : "#1f2937",
                   }}
                 >
                   {r.national === 1 ? "●" : "○"}
                 </span>
-                {/* States */}
                 {STATES.map((s) => (
                   <span
                     key={s}
                     style={{
-                      fontSize: 11,
+                      fontSize: 12,
+                      textAlign: "center" as const,
                       color:
                         r[s.toLowerCase()] === 1 ? STATE_COLORS[s] : "#1f2937",
-                      textAlign: "center",
                     }}
                   >
                     {r[s.toLowerCase()] === 1 ? "●" : "○"}
@@ -650,6 +1192,146 @@ export default function ShortageAnalysis() {
           )}
         </div>
       </Card>
+    </>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// MAIN PAGE
+// ══════════════════════════════════════════════════════════════════
+
+export default function ShortageAnalysis() {
+  const [tab, setTab] = useState<"forecast" | "historical">("forecast");
+  const [trend, setTrend] = useState<any>(null);
+  const [heatmap, setHeatmap] = useState<any>(null);
+  const [year, setYear] = useState(2025);
+
+  useEffect(() => {
+    Promise.all([
+      fetch(`${API}/api/data/osl-trend`).then((r) => r.json()),
+      fetch(`${API}/api/data/shortage-heatmap?year=2025`).then((r) => r.json()),
+    ]).then(([t, h]) => {
+      setTrend(t);
+      setHeatmap(h);
+    });
+  }, []);
+
+  useEffect(() => {
+    fetch(`${API}/api/data/shortage-heatmap?year=${year}`)
+      .then((r) => r.json())
+      .then((h) => setHeatmap(h));
+  }, [year]);
+
+  return (
+    <PageWrapper>
+      {/* Header */}
+      <div style={{ marginBottom: 24 }}>
+        <h1
+          style={{
+            fontSize: 22,
+            fontWeight: 800,
+            color: "#f9fafb",
+            marginBottom: 4,
+          }}
+        >
+          Occupation Shortage Analysis
+        </h1>
+        <p style={{ fontSize: 13, color: C.muted }}>
+          Historical OSL 2021–2025 (DESE) &nbsp;·&nbsp; ML forecast 2026–2030
+          (RandomForest, 916 occupations)
+        </p>
+      </div>
+
+      {/* KPIs */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4,1fr)",
+          gap: 12,
+          marginBottom: 28,
+        }}
+      >
+        <KpiCard
+          label="Total Occupations"
+          value={fmt(heatmap?.total_occupations)}
+          sub="In OSL 2025"
+          color="#2a8bff"
+        />
+        <KpiCard
+          label="National Shortage"
+          value={fmt(heatmap?.national_shortage_count)}
+          sub="On shortage list"
+          color="#ef4444"
+        />
+        <KpiCard
+          label="Shortage Rate"
+          value={`${heatmap?.national_shortage_pct ?? 0}%`}
+          sub="Of all occupations"
+          color="#f59e0b"
+        />
+        <KpiCard
+          label="Forecast Occupations"
+          value="916"
+          sub="With 2026–2030 ML forecast"
+          color="#8b5cf6"
+        />
+      </div>
+
+      {/* Tabs */}
+      <div
+        style={{
+          display: "flex",
+          borderBottom: `1px solid ${C.border}`,
+          marginBottom: 20,
+        }}
+      >
+        {(
+          [
+            {
+              key: "forecast",
+              label: "ML Forecast 2026–2030",
+              color: C.purple,
+            },
+            {
+              key: "historical",
+              label: "Historical OSL 2021–2025",
+              color: C.blue,
+            },
+          ] as const
+        ).map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            style={{
+              padding: "10px 24px",
+              fontSize: 12,
+              fontWeight: tab === t.key ? 700 : 500,
+              cursor: "pointer",
+              border: "none",
+              borderRadius: "8px 8px 0 0",
+              background: tab === t.key ? C.surface : "transparent",
+              color: tab === t.key ? t.color : C.muted,
+              borderBottom:
+                tab === t.key
+                  ? `2px solid ${t.color}`
+                  : "2px solid transparent",
+              marginBottom: -1,
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "forecast" && <ForecastTab />}
+      {tab === "historical" && (
+        <HistoricalTab
+          trend={trend}
+          heatmap={heatmap}
+          year={year}
+          setYear={setYear}
+        />
+      )}
     </PageWrapper>
   );
 }
