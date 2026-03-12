@@ -1,0 +1,5 @@
+*.csv
+*.png 
+*_pycache_
+backend/
+frontend/

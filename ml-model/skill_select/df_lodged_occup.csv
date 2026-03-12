@@ -1,0 +1,427 @@
+,Pekerjaan (Occupation),LODGE_count
+0,221111 Accountant (General),2954
+1,351311 Chef,2667
+2,261111 ICT Business Analyst,2629
+3,233211 Civil Engineer,2626
+4,233512 Mechanical Engineer,2399
+5,233914 Engineering Technologist,2326
+6,261313 Software Engineer,2256
+7,321211 Motor Mechanic (General),2103
+8,254499 Registered Nurses nec,2054
+9,141111 Cafe or Restaurant Manager,2043
+10,233311 Electrical Engineer,1977
+11,312211 Civil Engineering Draftsperson,1959
+12,263111 Computer Network and Systems Engineer,1957
+13,261312 Developer Programmer,1924
+14,242111 University Lecturer,1897
+15,262112 ICT Security Specialist,1769
+16,225113 Marketing Specialist,1760
+17,261112 Systems Analyst,1723
+18,241111 Early Childhood (Pre-primary School) Teacher,1690
+19,141311 Hotel or Motel Manager,1670
+20,241411 Secondary School Teacher,1620
+21,411411 Enrolled Nurse,1563
+22,331212 Carpenter,1557
+23,233411 Electronics Engineer,1551
+24,133111 Construction Project Manager,1519
+25,221213 External Auditor,1503
+26,312111 Architectural Draftsperson,1471
+27,232111 Architect,1429
+28,263212 ICT Support Engineer,1421
+29,411711 Community Worker,1419
+30,332211 Painting Trades Worker,1378
+31,233111 Chemical Engineer,1340
+32,351411 Cook,1286
+33,272613 Welfare Worker,1239
+34,131112 Sales and Marketing Manager,1224
+35,251513 Retail Pharmacist,1204
+36,272511 Social Worker,1203
+37,132211 Finance Manager,1178
+38,252511 Physiotherapist,1174
+39,241213 Primary School Teacher,1119
+40,224999 Information and Organisation Professionals nec,1109
+41,233999 Engineering Professionals nec,1108
+42,221113 Taxation Accountant,1094
+43,233213 Quantity Surveyor,1086
+44,254415 Registered Nurse (Critical Care and Emergency),1084
+45,254418 Registered Nurse (Medical),1070
+46,261311 Analyst Programmer,1070
+47,223112 Recruitment Consultant,1055
+48,341111 Electrician (General),1038
+49,254412 Registered Nurse (Aged Care),1027
+50,312212 Civil Engineering Technician,1027
+51,234312 Environmental Consultant,1006
+52,263311 Telecommunications Engineer,998
+53,234111 Agricultural Consultant,944
+54,511112 Program or Project Administrator,941
+55,135112 ICT Project Manager,938
+56,232611 Urban and Regional Planner,936
+57,261399 Software and Applications Programmers nec,925
+58,232411 Graphic Designer,919
+59,271311 Solicitor,914
+60,511111 Contract Administrator,862
+61,322313 Welder (First Class),860
+62,253111 General Practitioner,848
+63,221214 Internal Auditor,840
+64,233513 Production or Plant Engineer,833
+65,262113 Systems Administrator,833
+66,149311 Conference and Event Organiser,828
+67,323211 Fitter (General),827
+68,252411 Occupational Therapist,820
+69,233214 Structural Engineer,808
+70,224711 Management Consultant,790
+71,233611 Mining Engineer (excluding Petroleum),770
+72,224113 Statistician,761
+73,234514 Biotechnologist,758
+74,221112 Management Accountant,749
+75,234511 Life Scientist (General),738
+76,251511 Hospital Pharmacist,732
+77,254424 Registered Nurse (Surgical),729
+78,132311 Human Resource Manager,722
+79,351111 Baker,722
+80,234212 Food Technologist,721
+81,222311 Financial Investment Adviser,707
+82,233511 Industrial Engineer,701
+83,232214 Other Spatial Scientist,678
+84,249311 Teacher of English to Speakers of Other Languages,669
+85,234313 Environmental Research Scientist,662
+86,261314 Software Tester,657
+87,333411 Wall and Floor Tiler,649
+88,311215 Pharmacy Technician,648
+89,234611 Medical Laboratory Scientist,647
+90,331111 Bricklayer,640
+91,261212 Web Developer,639
+92,134299 Health and Welfare Services Managers nec,625
+93,253112 Resident Medical Officer,624
+94,132511 Research and Development Manager,621
+95,253999 Medical Practitioners nec,616
+96,233915 Environmental Engineer,613
+97,234411 Geologist,609
+98,252711 Audiologist,589
+99,322311 Metal Fabricator,589
+100,351112 Pastrycook,587
+101,262111 Database Administrator,587
+102,249299 Private Tutors and Teachers nec,555
+103,234211 Chemist,554
+104,224712 Organisation and Methods Analyst,546
+105,251312 Occupational Health and Safety Adviser,544
+106,311411 Chemistry Technician,543
+107,334111 Plumber (General),536
+108,254423 Registered Nurse (Perioperative),530
+109,225311 Public Relations Professional,525
+110,234711 Veterinarian,517
+111,323214 Metal Machinist (First Class),498
+112,133211 Engineering Manager,495
+113,311413 Life Science Technician,479
+114,224311 Economist,471
+115,263112 Network Administrator,465
+116,311213 Medical Laboratory Technician,464
+117,342315 Electronic Instrument Trades Worker (Special Class),456
+118,252712 Speech Pathologist,451
+119,254422 Registered Nurse (Mental Health),444
+120,232212 Surveyor,435
+121,272399 Psychologists nec,434
+122,232112 Landscape Architect,432
+123,224111 Actuary,431
+124,135199 ICT Managers nec,431
+125,134213 Primary Health Organisation Manager,426
+126,311399 Primary Products Inspectors nec,425
+127,342111 Airconditioning and Refrigeration Mechanic,420
+128,133512 Production Manager (Manufacturing),420
+129,233913 Biomedical Engineer,417
+130,234112 Agricultural Scientist,416
+131,254425 Registered Nurse (Paediatrics),416
+132,225111 Advertising Specialist,413
+133,"312199 Architectural, Building and Surveying Technicians nec",412
+134,139914 Quality Assurance Manager,411
+135,234517 Microbiologist,408
+136,233112 Materials Engineer,407
+137,233612 Petroleum Engineer,405
+138,141999 Accommodation and Hospitality Managers nec,402
+139,149913 Facilities Manager,400
+140,121321 Poultry Farmer,391
+141,233911 Aeronautical Engineer,389
+142,313113 Web Administrator,386
+143,311111 Agricultural Technician,385
+144,394111 Cabinetmaker,380
+145,312912 Metallurgical or Materials Technician,378
+146,312311 Electrical Engineering Draftsperson,376
+147,272314 Psychotherapist,372
+148,149212 Customer Service Manager,369
+149,271299 Judicial and Other Legal Professionals nec,368
+150,232414 Web Designer,367
+151,251911 Health Promotion Officer,365
+152,411611 Massage Therapist,360
+153,233212 Geotechnical Engineer,344
+154,223111 Human Resource Adviser,340
+155,249111 Education Adviser,329
+156,312114 Construction Estimator,322
+157,149413 Transport Company Manager,321
+158,133611 Supply and Distribution Manager,319
+159,263299 ICT Support and Test Engineers nec,315
+160,312312 Electrical Engineering Technician,315
+161,252312 Dentist,310
+162,242211 Vocational Education Teacher,308
+163,263312 Telecommunications Network Engineer,308
+164,251211 Medical Diagnostic Radiographer,301
+165,391111 Hairdresser,301
+166,222112 Finance Broker,298
+167,254111 Midwife,295
+168,121221 Vegetable Grower,294
+169,313213 Telecommunications Network Planner,288
+170,312113 Building Inspector,287
+171,139999 Specialist Managers nec,283
+172,611211 Insurance Agent,282
+173,261211 Multimedia Specialist,282
+174,234914 Physicist,279
+175,132111 Corporate Services Manager,279
+176,333212 Solid Plasterer,274
+177,133411 Manufacturer,274
+178,272412 Interpreter,271
+179,251512 Industrial Pharmacist,268
+180,342313 Electronic Equipment Trades Worker,267
+181,223211 ICT Trainer,267
+182,321111 Automotive Electrician,266
+183,225499 Technical Sales Representatives nec,258
+184,139912 Environmental Manager,258
+185,263213 ICT Systems Test Engineer,256
+186,452321 Sports Development Officer,254
+187,312512 Mechanical Engineering Technician,250
+188,225212 ICT Business Development Manager,248
+189,272499 Social Professionals nec,246
+190,241311 Middle School Teacher,243
+191,272199 Counsellors nec,241
+192,323112 Aircraft Maintenance Engineer (Mechanical),240
+193,234599 Life Scientists nec,239
+194,331211 Carpenter and Joiner,234
+195,249214 Music Teacher (Private Tuition),234
+196,234113 Forester,229
+197,234513 Biochemist,225
+198,342314 Electronic Instrument Trades Worker (General),224
+199,212412 Newspaper or Periodical Editor,222
+200,233215 Transport Engineer,220
+201,234516 Marine Biologist,220
+202,342411 Cabler (Data and Telecommunications),218
+203,241511 Special Needs Teacher,218
+204,272612 Recreation Officer,214
+205,224512 Valuer,214
+206,334112 Airconditioning and Mechanical Services Plumber,213
+207,225213 ICT Sales Representative,210
+208,313214 Telecommunications Technical Officer or Technologist,206
+209,411311 Diversional Therapist,201
+210,272114 Rehabilitation Counsellor,200
+211,225211 ICT Account Manager,199
+212,321212 Diesel Motor Mechanic,196
+213,254421 Registered Nurse (Medical Practice),194
+214,452315 Swimming Coach or Instructor,193
+215,233912 Agricultural Engineer,190
+216,312999 Building and Engineering Technicians nec,190
+217,411716 Youth Worker,189
+218,272115 Student Counsellor,189
+219,121216 Mixed Crop Farmer,188
+220,312911 Maintenance Planner,187
+221,234412 Geophysicist,182
+222,251112 Nutritionist,181
+223,311499 Science Technicians nec,179
+224,132411 Policy and Planning Manager,179
+225,134499 Education Managers nec,176
+226,232511 Interior Designer,175
+227,313112 ICT Customer Support Officer,170
+228,222312 Financial Investment Manager,170
+229,212415 Technical Writer,166
+230,224412 Policy Analyst,164
+231,232312 Industrial Designer,159
+232,361311 Veterinary Nurse,155
+233,612112 Property Manager,153
+234,224511 Land Economist,152
+235,323212 Fitter and Turner,152
+236,311211 Anaesthetic Technician,151
+237,253912 Emergency Medicine Specialist,142
+238,272413 Translator,141
+239,263211 ICT Quality Assurance Engineer,139
+240,254414 Registered Nurse (Community Health),139
+241,254417 Registered Nurse (Disability and Rehabilitation),137
+242,224611 Librarian,136
+243,254211 Nurse Educator,136
+244,224112 Mathematician,135
+245,234213 Wine Maker,135
+246,311312 Meat Inspector,134
+247,252111 Chiropractor,134
+248,333211 Fibrous Plasterer,134
+249,313212 Telecommunications Field Engineer,130
+250,341112 Electrician (Special Class),127
+251,134311 School Principal,124
+252,134211 Medical Administrator,124
+253,341113 Lift Mechanic,121
+254,362211 Gardener (General),121
+255,139911 Arts Administrator or Manager,120
+256,312116 Surveying or Spatial Science Technician,120
+257,333111 Glazier,120
+258,211311 Photographer,120
+259,234399 Environmental Scientists nec,117
+260,212499 Journalists and Other Writers nec,117
+261,212314 Film and Video Editor,115
+262,322211 Sheetmetal Trades Worker,114
+263,311412 Earth Science Technician,112
+264,411712 Disabilities Services Officer,111
+265,234912 Metallurgist,109
+266,231213 Ship's Master,108
+267,134111 Child Care Centre Manager,108
+268,324111 Panelbeater,106
+269,212411 Copywriter,100
+270,224213 Health Information Manager,98
+271,232413 Multimedia Designer,97
+272,234518 Zoologist,96
+273,234915 Exercise Physiologist,96
+274,263113 Network Analyst,94
+275,232412 Illustrator,94
+276,224912 Liaison Officer,92
+277,251111 Dietitian,89
+278,251999 Health Diagnostic and Promotion Professionals nec,88
+279,331213 Joiner,88
+280,139913 Laboratory Manager,87
+281,411111 Ambulance Officer,87
+282,222113 Insurance Broker,86
+283,253411 Psychiatrist,86
+284,323111 Aircraft Maintenance Engineer (Avionics),85
+285,149914 Financial Institution Branch Manager,85
+286,233916 Naval Architect,82
+287,222299 Financial Dealers nec,81
+288,232311 Fashion Designer,78
+289,311299 Medical Technicians nec,77
+290,334113 Drainer,76
+291,211213 Musician (Instrumental),75
+292,251214 Sonographer,75
+293,311216 Pathology Collector,74
+294,234999 Natural and Physical Science Professionals nec,73
+295,252299 Complementary Health Therapists nec,72
+296,312611 Safety Inspector,69
+297,254311 Nurse Manager,69
+298,222211 Financial Market Dealer,65
+299,411213 Dental Technician,64
+300,599915 Clinical Coder,64
+301,134412 Regional Education Manager,63
+302,312511 Mechanical Engineering Draftsperson,63
+303,121215 Grape Grower,62
+304,252611 Podiatrist,61
+305,399212 Gas or Petroleum Operator,60
+306,121212 Flower Grower,59
+307,251411 Optometrist,58
+308,121213 Fruit or Nut Grower,57
+309,234413 Hydrogeologist,56
+310,272311 Clinical Psychologist,55
+311,451815 First Aid Trainer,55
+312,212318 Video Producer,55
+313,333311 Roof Tiler,54
+314,411713 Family Support Worker,53
+315,452316 Tennis Coach,52
+316,254413 Registered Nurse (Child and Family Health),51
+317,452317 Other Sports Coach or Instructor,51
+318,224214 Records Manager,50
+319,411112 Intensive Care Ambulance Paramedic,48
+320,272112 Drug and Alcohol Counsellor,47
+321,222111 Commodities Trader,47
+322,251412 Orthoptist,46
+323,323213 Fitter-Welder,46
+324,441211 Emergency Service Worker,44
+325,251311 Environmental Health Officer,43
+326,253311 Specialist Physician (General Medicine),42
+327,452312 Gymnastics Coach or Instructor,42
+328,351211 Butcher or Smallgoods Maker,41
+329,612115 Real Estate Representative,41
+330,141211 Caravan Park and Camping Ground Manager,41
+331,399599 Performing Arts Technicians nec,40
+332,331112 Stonemason,40
+333,212212 Book or Script Editor,40
+334,639211 Retail Buyer,39
+335,323412 Toolmaker,38
+336,253316 Gastroenterologist,37
+337,253321 Paediatrician,37
+338,399111 Boat Builder and Repairer,37
+339,334115 Roof Plumber,37
+340,231113 Flying Instructor,36
+341,272113 Family and Marriage Counsellor,35
+342,225112 Market Research Analyst,35
+343,254411 Nurse Practitioner,34
+344,234913 Meteorologist,34
+345,451211 Driving Instructor,32
+346,212416 Television Journalist,31
+347,253317 Intensive Care Specialist,31
+348,222213 Stockbroking Dealer,30
+349,134214 Welfare Centre Manager,30
+350,392311 Printing Machinist,30
+351,253399 Specialist Physicians nec,30
+352,212413 Print Journalist,30
+353,334114 Gasfitter,29
+354,254416 Registered Nurse (Developmental Disability),28
+355,271111 Barrister,28
+356,"212312 Director (Film, Television, Radio or Stage)",28
+357,252112 Osteopath,27
+358,121411 Mixed Crop and Livestock Farmer,27
+359,411715 Residential Care Officer,26
+360,451711 Flight Attendant,25
+361,234911 Conservator,24
+362,253917 Diagnostic and Interventional Radiologist,23
+363,251212 Medical Radiation Therapist,22
+364,221211 Company Secretary,22
+365,149113 Sports Centre Manager,22
+366,411211 Dental Hygienist,22
+367,311212 Cardiac Technician,21
+368,362311 Greenkeeper,21
+369,133112 Project Builder,21
+370,212111 Artistic Director,21
+371,241599 Special Education Teachers nec,20
+372,"399512 Camera Operator (Film, Television or Video)",18
+373,211212 Music Director,18
+374,131113 Advertising Manager,18
+375,253913 Obstetrician and Gynaecologist,18
+376,133513 Production Manager (Mining),17
+377,272312 Educational Psychologist,17
+378,342211 Electrical Linesworker,17
+379,342413 Telecommunications Linesworker,16
+380,362212 Arborist,16
+381,313111 Hardware Technician,16
+382,361112 Horse Trainer,15
+383,"121214 Grain, Oilseed or Pasture Grower",15
+384,142115 Post Office Manager,15
+385,399213 Power Generation Plant Operator,15
+386,253511 Surgeon (General),15
+387,452413 Jockey,14
+388,253512 Cardiothoracic Surgeon,14
+389,599612 Insurance Loss Adjuster,13
+390,272611 Community Arts Worker,13
+391,324311 Vehicle Painter,13
+392,251213 Nuclear Medicine Technologist,13
+393,411214 Dental Therapist,13
+394,139915 Sports Administrator,12
+395,149112 Fitness Centre Manager,12
+396,332111 Floor Finisher,12
+397,253514 Orthopaedic Surgeon,12
+398,321214 Small Engine Mechanic,11
+399,362411 Nurseryperson,10
+400,249212 Dance Teacher (Private Tuition),10
+401,253318 Neurologist,10
+402,313199 ICT Support Technicians nec,9
+403,253211 Anaesthetist,9
+404,232213 Cartographer,9
+405,342212 Technical Cable Jointer,9
+406,133612 Procurement Manager,9
+407,252213 Naturopath,8
+408,311214 Operating Theatre Technician,7
+409,211112 Dancer or Choreographer,7
+410,252311 Dental Specialist,7
+411,252211 Acupuncturist,6
+412,253315 Endocrinologist,6
+413,234515 Botanist,5
+414,253517 Plastic and Reconstructive Surgeon,4
+415,224914 Patents Examiner,4
+416,323113 Aircraft Maintenance Engineer (Structures),4
+417,361199 Animal Attendants and Trainers nec,3
+418,253914 Ophthalmologist,3
+419,252214 Traditional Chinese Medicine Practitioner,3
+420,253324 Thoracic Medicine Specialist,3
+421,253312 Cardiologist,2
+422,241512 Teacher of the Hearing Impaired,2
+423,253516 Paediatric Surgeon,2
+424,362213 Landscape Gardener,2
+425,361114 Zookeeper,1
