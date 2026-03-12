@@ -1,4 +1,7 @@
 *.csv
+ml-model\skill_select\df_filtered.csv
+ml-model\skill_select\df_lodged_occup.csv
+ml-model\skill_select\df_occupation.csv
 *.png 
 *_pycache_
 backend/
