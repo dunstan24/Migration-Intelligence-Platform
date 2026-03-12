@@ -1,0 +1,47 @@
+# ── Web framework ──────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+python-multipart==0.0.9
+
+# ── Config ────────────────────────────────────────────────
+pydantic==2.7.4
+pydantic-settings==2.3.4
+python-dotenv==1.0.1
+
+# ── Database ──────────────────────────────────────────────
+sqlalchemy==2.0.30
+aiosqlite==0.20.0          # SQLite async driver (dev)
+alembic==1.13.1            # DB migrations
+
+# ── Cache ─────────────────────────────────────────────────
+redis==5.0.4               # Redis client (optional — works without)
+
+# ── Data processing ───────────────────────────────────────
+pandas==2.2.2
+openpyxl==3.1.3            # Read .xlsx files
+numpy==1.26.4
+
+# ── HTTP ──────────────────────────────────────────────────
+httpx==0.27.0
+
+# ── LLM (Sprint 5) ────────────────────────────────────────
+anthropic==0.28.0
+
+# ── ML (Sprint 4) — uncomment when ready ──────────────────
+# scikit-learn==1.5.0
+# xgboost==2.0.3
+# prophet==1.1.5
+# shap==0.45.1
+# joblib==1.4.2
+
+# ── RAG (Sprint 5) — uncomment when ready ─────────────────
+# chromadb==0.5.3
+# sentence-transformers==3.0.1
+
+# ── Reports (Sprint 6) — uncomment when ready ─────────────
+# python-pptx==0.6.23
+# weasyprint==62.3
+# jinja2==3.1.4
+
+# ── Queue (Sprint 6) — uncomment when ready ───────────────
+# celery==5.4.0
