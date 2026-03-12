@@ -1332,6 +1332,80 @@ async def get_shortage_forecast_by_code(
     return data
 
 
+# ── /api/data/volume-forecast ────────────────────────────────
+@router.get("/volume-forecast")
+async def get_volume_forecast(
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Prophet migration volume forecast Jan 2026 – Dec 2030.
+    Source: migration_volume_forecast table (60 monthly rows).
+    Returns point forecast + 80% and 95% confidence intervals.
+    """
+    cache_key = "data:volume_forecast"
+    cached = await get_cache(cache_key)
+    if cached:
+        return JSONResponse(json.loads(cached))
+
+    try:
+        result = await db.execute(text("""
+            SELECT month, year, month_no,
+                   yhat, yhat_lower_95, yhat_upper_95,
+                   yhat_lower_80, yhat_upper_80
+            FROM migration_volume_forecast
+            ORDER BY month
+        """))
+        rows = result.fetchall()
+
+        records = [
+            {
+                "month":         r[0],
+                "year":          r[1],
+                "month_no":      r[2],
+                "yhat":          round(r[3], 0),
+                "yhat_lower_95": round(r[4], 0),
+                "yhat_upper_95": round(r[5], 0),
+                "yhat_lower_80": round(r[6], 0),
+                "yhat_upper_80": round(r[7], 0),
+            }
+            for r in rows
+        ]
+
+        # Yearly aggregates for summary cards
+        yearly: dict = {}
+        for r in records:
+            y = str(r["year"])
+            if y not in yearly:
+                yearly[y] = {"yhat": 0, "count": 0}
+            yearly[y]["yhat"]  += r["yhat"]
+            yearly[y]["count"] += 1
+        yearly_totals = [
+            {"year": y, "total": round(v["yhat"], 0), "months": v["count"]}
+            for y, v in sorted(yearly.items())
+        ]
+
+        data = {
+            "source":         "Prophet — migration_volume_forecast table",
+            "model":          "Prophet (Meta) time-series",
+            "total_months":   len(records),
+            "date_range":     f"{records[0]['month']} to {records[-1]['month']}" if records else "",
+            "records":        records,
+            "yearly_totals":  yearly_totals,
+        }
+
+    except Exception as e:
+        data = {
+            "source":  "error",
+            "error":   str(e),
+            "records": [],
+            "yearly_totals": [],
+            "note": "Run: python pipelines/ingestors/volume_forecast_ingestor.py",
+        }
+
+    await set_cache(cache_key, json.dumps(data), ttl=3600)
+    return data
+
+
 # ── /api/data/report ─────────────────────────────────────────
 @router.get("/report")
 async def get_report(
