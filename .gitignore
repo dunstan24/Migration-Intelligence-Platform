@@ -13,3 +13,4 @@ ml/serialized/*.joblib
 .DS_Store
 Thumbs.db
 package-lock.json
+dataset/
