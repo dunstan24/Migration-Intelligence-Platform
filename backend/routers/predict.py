@@ -5,9 +5,12 @@ Returns: { prediction, confidence, shap_values }
 Models are pre-loaded into memory at startup via main.py lifespan
 """
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 import numpy as np
+
+from models import VolumeForecaster
 
 router = APIRouter()
 
@@ -55,6 +58,29 @@ async def predict(model_name: str, body: PredictInput):
         raise HTTPException(400, f"model_name must be one of: {valid}")
 
     model = models.get(model_name)
+
+    # Jika model_name volume, gunakan VolumeForecaster (Prophet/ARIMA)
+    if model_name == "volume":
+        try:
+            from models import VolumeForecaster
+            df_clean, train, test = VolumeForecaster.prepare_data()
+            if df_clean is not None:
+                final_type, results, mape_val = VolumeForecaster.train_forecaster(df_clean, train, test)
+                results['ds'] = results['ds'].dt.strftime('%Y-%m-%d')
+                json_response = {
+                    "status": "success",
+                    "metadata": {
+                        "algorithm": final_type,
+                        "mape": round(float(mape_val), 5),
+                        "historical_points": len(df_clean)
+                    },
+                    "predictions": results.to_dict(orient='records')
+                }
+                return JSONResponse(content=json_response)
+            else:
+                return JSONResponse(content={"status": "error", "message": "Data preparation failed"}, status_code=400)
+        except Exception as e:
+            return JSONResponse(content={"status": "error", "message": str(e)}, status_code=500)
     features = body.dict(exclude_none=True)
 
     # Sprint 4: real model inference
@@ -93,3 +119,9 @@ async def predict(model_name: str, body: PredictInput):
         response["recommendation"] = "LIKELY APPROVED" if prediction >= 0.75 else "BORDERLINE — seek advice"
 
     return response
+
+
+
+
+from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
