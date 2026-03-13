@@ -208,8 +208,7 @@ class ApprovalInput(BaseModel):
         description="Full ANZSCO occupation string e.g. '261313 Software Engineer'"
     )
     points:     int   = Field(default=80,  ge=35,  le=140)
-    count_eois: int   = Field(default=50,  ge=1,   le=2000,
-                              description="Count of EOIs in this cohort (same occupation+state+visa).")
+    count_eois: Optional[int] = Field(default=1068, ge=1, le=2125)
     state: Literal["NSW","VIC","QLD","WA","SA","TAS","ACT","NT"] = Field(default="NSW")
 
 class OccupationSearchInput(BaseModel):
@@ -286,7 +285,7 @@ async def predict_approval(body: ApprovalInput):
             visa_type=body.visa_type,
             state=body.state,
             points=body.points,
-            count_eois=body.count_eois,
+            count_eois=1068,
             occ_popularity=occ_popularity,
         )
 

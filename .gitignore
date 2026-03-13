@@ -54,3 +54,5 @@ Thumbs.db
 .env
 .env.local
 .env.*
+
+./ml-model/skill_select/df_filtered.csv

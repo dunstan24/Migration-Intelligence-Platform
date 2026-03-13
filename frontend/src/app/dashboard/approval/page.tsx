@@ -499,7 +499,7 @@ export default function ApprovalScorer() {
     visa_type: "491",
     occupation: "261313 Software Engineer",
     points: 80,
-    count_eois: 50,
+    count_eois: 1068,// karena min dan max eoi count dari 10 hingga 2125,1068 dijadikan sebagai threshold
     state: "NSW",
   });
   const [result, setResult] = useState<any>(null);
@@ -714,41 +714,6 @@ export default function ApprovalScorer() {
               </p>
             </div>
 
-            {/* Count EOIs */}
-            <div style={{ marginBottom: 13 }}>
-              <FieldLabel
-                text="Count EOIs in Cohort"
-                sub="EOIs in same occupation + state + visa group"
-              />
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <input
-                  type="range"
-                  min={1}
-                  max={500}
-                  value={form.count_eois}
-                  onChange={(e) => set("count_eois", Number(e.target.value))}
-                  style={{ flex: 1, accentColor: C.cyan }}
-                />
-                <span
-                  style={{
-                    fontSize: 16,
-                    fontWeight: 800,
-                    color: C.cyan,
-                    minWidth: 36,
-                    textAlign: "right",
-                  }}
-                >
-                  {form.count_eois}
-                </span>
-              </div>
-              <p style={{ fontSize: 9, color: C.muted, marginTop: 3 }}>
-                {form.count_eois <= 20
-                  ? "⬇ Small queue — typically higher probability"
-                  : form.count_eois >= 100
-                    ? "⬆ Large queue — more competition"
-                    : "Medium queue size"}
-              </p>
-            </div>
 
             {/* State */}
             <div style={{ marginBottom: 18 }}>
@@ -1023,37 +988,6 @@ export default function ApprovalScorer() {
                 </div>
               </div>
 
-              {/* Feature importance */}
-              {Object.keys(topImp).length > 0 && (
-                <Card>
-                  <p
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 700,
-                      color: C.text,
-                      marginBottom: 14,
-                    }}
-                  >
-                    Top Feature Importances (XGBoost)
-                  </p>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: "0 24px",
-                    }}
-                  >
-                    {Object.entries(topImp).map(([name, val]) => (
-                      <ImpBar
-                        key={name}
-                        name={name}
-                        value={Number(val)}
-                        max={impMax}
-                      />
-                    ))}
-                  </div>
-                </Card>
-              )}
             </>
           )}
 
