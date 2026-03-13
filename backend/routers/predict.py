@@ -4,6 +4,9 @@ POST /api/predict/pathway   — GBM model_a.joblib      (visa subclass recommend
 POST /api/predict/approval  — XGBoost model_xgb.pkl   (EOI approval probability)
                               encoder: encoder_occupation.pkl (LabelEncoder, 386 occupations)
 """
+"""
+model-a
+"""
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import Literal, Optional
