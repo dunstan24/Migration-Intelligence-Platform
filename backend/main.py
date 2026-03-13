@@ -1,35 +1,87 @@
 """
 main.py — FastAPI entry point
-Models loaded at startup via lifespan (never from disk per request)
-Routers: /api/data/* | /api/predict/* | /api/llm/*
+Models loaded at startup via lifespan:
+  models["pathway"]     — GBM sklearn Pipeline     backend/models/model_a.joblib
+  models["approval"]    — XGBoost XGBClassifier     backend/models/model_xgb.pkl
+  models["occ_encoder"] — sklearn LabelEncoder      backend/models/encoder_occupation.pkl
 """
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import logging
-import os
+import logging, os, numpy as np
 
 logger = logging.getLogger(__name__)
-
-# Global model store — loaded once at startup, reused per request
 models = {}
+
+
+def _patch_sklearn_imputer():
+    """Fix sklearn SimpleImputer compatibility (trained on ~1.2, running on 1.4+)."""
+    try:
+        from sklearn.impute import SimpleImputer
+        if not hasattr(SimpleImputer, "_fill_dtype"):
+            def _fill_dtype(self):
+                if (self.statistics_ is not None
+                        and self.statistics_.dtype.kind in ("U","O","S")):
+                    return object
+                return np.float64
+            SimpleImputer._fill_dtype = property(_fill_dtype)
+            logger.info("✅ Applied sklearn SimpleImputer compatibility patch")
+    except Exception as e:
+        logger.warning(f"⚠️  Could not apply sklearn patch: {e}")
+
+
+def _load_joblib(path: str, label: str):
+    import joblib
+    if not os.path.exists(path):
+        logger.warning(f"⚠️  {label} not found at {path}")
+        return None
+    try:
+        obj = joblib.load(path)
+        logger.info(f"✅ Loaded {label} ({path})")
+        return obj
+    except Exception as e:
+        logger.error(f"❌ Failed to load {label}: {e}")
+        return None
+
+
+def _load_pickle(path: str, label: str):
+    import pickle
+    if not os.path.exists(path):
+        logger.warning(f"⚠️  {label} not found at {path}")
+        return None
+    try:
+        with open(path, "rb") as f:
+            obj = pickle.load(f)
+        logger.info(f"✅ Loaded {label} ({path})")
+        return obj
+    except Exception as e:
+        logger.error(f"❌ Failed to load {label}: {e}")
+        return None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load pathway model (model_a.joblib) at startup — never from disk per request."""
-    import joblib
+    _patch_sklearn_imputer()
+
     models_dir = os.getenv("MODELS_DIR", "./models")
 
-    path = os.path.join(models_dir, "model_a.joblib")
-    if os.path.exists(path):
-        models["pathway"] = joblib.load(path)
-        logger.info(f"✅ Loaded model: pathway from {path}")
-    else:
-        logger.warning(f"⚠️  Model not found: {path} — using None placeholder")
-        models["pathway"] = None
+    # GBM pathway model (sklearn Pipeline)
+    models["pathway"] = _load_joblib(
+        os.path.join(models_dir, "model_a.joblib"), "pathway model"
+    )
 
-    logger.info(f"🚀 Interlace API started · {len(models)} models in memory")
+    # XGBoost approval model — joblib handles numpy arrays inside pkl correctly
+    models["approval"] = _load_joblib(
+        os.path.join(models_dir, "model_xgb.pkl"), "approval model (XGBoost)"
+    )
+
+    # Occupation LabelEncoder — joblib
+    models["occ_encoder"] = _load_joblib(
+        os.path.join(models_dir, "encoder_occupation.pkl"), "occupation encoder"
+    )
+
+    loaded = {k: v is not None for k, v in models.items()}
+    logger.info(f"🚀 Interlace API started · models: {loaded}")
     yield
     models.clear()
     logger.info("🛑 Shutdown — models cleared")
@@ -37,7 +89,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Interlace Migration Intelligence API",
-    description="FastAPI backend · /api/data/* /api/predict/* /api/llm/*",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -50,7 +101,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register routers per README structure
 from routers import data, predict, llm
 app.include_router(data.router,    prefix="/api/data",    tags=["Data"])
 app.include_router(predict.router, prefix="/api/predict", tags=["Predict"])

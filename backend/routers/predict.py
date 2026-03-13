@@ -1,12 +1,12 @@
 """
 routers/predict.py
-POST /api/predict/{model_name}
-Returns: { prediction, confidence, shap_values }
-Models are pre-loaded into memory at startup via main.py lifespan
+POST /api/predict/pathway   — GBM model_a.joblib      (visa subclass recommender)
+POST /api/predict/approval  — XGBoost model_xgb.pkl   (EOI approval probability)
+                              encoder: encoder_occupation.pkl (LabelEncoder, 386 occupations)
 """
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from typing import Literal
+from typing import Literal, Optional
 import numpy as np
 import pandas as pd
 import traceback
@@ -17,37 +17,149 @@ from config import settings
 
 router = APIRouter()
 
-# ── Feature columns model_a was trained on ───────────────────────────────────
-MODEL_FEATURES = ["occupation", "state", "points", "english_level", "age", "experience"]
+# ── GBM pathway constants ─────────────────────────────────────
+ALL_STATES   = ["NSW","VIC","QLD","WA","SA","TAS","ACT","NT"]
+REGIONAL_STT = ["QLD","WA","SA","TAS","ACT","NT"]
+ENGLISH_POINTS = {"vocational":0,"competent":0,"proficient":10,"superior":20}
+VISAS = {0:"189 — Independent",1:"190 — State Nominated",2:"491 — Regional Sponsored"}
 
-# ── Visa class labels ─────────────────────────────────────────────────────────
-VISAS = {
-    0: "189 — Independent",
-    1: "190 — State Nominated",
-    2: "491 — Regional Sponsored",
+# ── XGB feature schema (32 features, exact order from booster) ─
+# [0]  Points
+# [1]  total_months_observed
+# [2]  avg_count_submitted
+# [3]  max_count_submitted
+# [4]  min_count_submitted
+# [5]  std_count_submitted
+# [6]  trend_submitted
+# [7]  last_count_submitted
+# [8]  first_count_submitted
+# [9]  growth_rate
+# [10] points_bucket
+# [11] volatility
+# [12] count_vs_state_avg
+# [13] count_vs_occ_avg
+# [14] is_small_queue
+# [15] is_large_queue
+# [16] growth_rate_log
+# [17] points_x_count
+# [18] occ_popularity
+# [19] occupation_enc
+# [20] Visa Type_189PTS Points-Tested Stream
+# [21] Visa Type_190SAS Skilled Australian Sponsored
+# [22] Visa Type_491FSR Family Sponsored - Regional
+# [23] Visa Type_491SNR State or Territory Nominated - Regional
+# [24] Nominated State_ACT
+# [25] Nominated State_NSW
+# [26] Nominated State_NT
+# [27] Nominated State_QLD
+# [28] Nominated State_SA
+# [29] Nominated State_TAS
+# [30] Nominated State_VIC
+# [31] Nominated State_WA
+
+XGB_FEATURE_NAMES = [
+    "Points","total_months_observed","avg_count_submitted","max_count_submitted",
+    "min_count_submitted","std_count_submitted","trend_submitted","last_count_submitted",
+    "first_count_submitted","growth_rate","points_bucket","volatility",
+    "count_vs_state_avg","count_vs_occ_avg","is_small_queue","is_large_queue",
+    "growth_rate_log","points_x_count","occ_popularity","occupation_enc",
+    "Visa Type_189PTS Points-Tested Stream",
+    "Visa Type_190SAS Skilled Australian Sponsored",
+    "Visa Type_491FSR Family Sponsored - Regional",
+    "Visa Type_491SNR State or Territory Nominated - Regional",
+    "Nominated State_ACT","Nominated State_NSW","Nominated State_NT",
+    "Nominated State_QLD","Nominated State_SA","Nominated State_TAS",
+    "Nominated State_VIC","Nominated State_WA",
+]
+
+XGB_VISA_MAP = {
+    "189": "Visa Type_189PTS Points-Tested Stream",
+    "190": "Visa Type_190SAS Skilled Australian Sponsored",
+    "491": "Visa Type_491SNR State or Territory Nominated - Regional",
+    "491fsr": "Visa Type_491FSR Family Sponsored - Regional",
 }
 
-ALL_STATES   = ["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"]
-REGIONAL_STT = ["QLD", "WA", "SA", "TAS", "ACT", "NT"]  # 491 eligible only
-
-ENGLISH_POINTS = {
-    "vocational": 0,
-    "competent":  0,
-    "proficient": 10,
-    "superior":   20,
+XGB_STATE_MAP = {
+    "ACT":"Nominated State_ACT","NSW":"Nominated State_NSW",
+    "NT":"Nominated State_NT",  "QLD":"Nominated State_QLD",
+    "SA":"Nominated State_SA",  "TAS":"Nominated State_TAS",
+    "VIC":"Nominated State_VIC","WA":"Nominated State_WA",
 }
 
+def points_to_bucket(pts: int) -> int:
+    """Replicate the points_bucket feature used during training."""
+    if pts < 65:  return 0
+    if pts < 70:  return 1
+    if pts < 75:  return 2
+    if pts < 80:  return 3
+    if pts < 85:  return 4
+    if pts < 90:  return 5
+    if pts < 100: return 6
+    return 7
 
-# ── SHAP proxy from GBM feature importances ───────────────────────────────────
-def compute_shap(model, feature_names: list) -> dict:
+def build_xgb_input(
+    occupation_enc: int,
+    visa_type: str,          # "189" | "190" | "491"
+    state: str,
+    points: int,
+    count_eois: int,
+    occ_popularity: float = 0.5,   # 0-1, normalised popularity rank
+) -> pd.DataFrame:
+    """
+    Builds a 1-row DataFrame with all 32 XGB features.
+    Derived/statistical features are estimated from the user's inputs.
+    """
+    # Derived stats — estimated from count_eois as proxy for queue depth
+    avg_c   = float(count_eois)
+    growth  = 0.0
+    growth_log = 0.0
+    trend   = 0.0
+
+    row = {n: 0.0 for n in XGB_FEATURE_NAMES}
+
+    # Numeric features
+    row["Points"]                 = float(points)
+    row["total_months_observed"]  = 12.0       # typical observation window
+    row["avg_count_submitted"]    = avg_c
+    row["max_count_submitted"]    = avg_c * 1.3
+    row["min_count_submitted"]    = avg_c * 0.7
+    row["std_count_submitted"]    = avg_c * 0.2
+    row["trend_submitted"]        = trend
+    row["last_count_submitted"]   = avg_c
+    row["first_count_submitted"]  = avg_c
+    row["growth_rate"]            = growth
+    row["points_bucket"]          = float(points_to_bucket(points))
+    row["volatility"]             = avg_c * 0.2
+    row["count_vs_state_avg"]     = 1.0        # neutral ratio
+    row["count_vs_occ_avg"]       = 1.0
+    row["is_small_queue"]         = 1.0 if count_eois <= 20 else 0.0
+    row["is_large_queue"]         = 1.0 if count_eois >= 100 else 0.0
+    row["growth_rate_log"]        = growth_log
+    row["points_x_count"]         = float(points) * avg_c
+    row["occ_popularity"]         = occ_popularity
+    row["occupation_enc"]         = float(occupation_enc)
+
+    # Visa OHE
+    visa_col = XGB_VISA_MAP.get(visa_type)
+    if visa_col and visa_col in row:
+        row[visa_col] = 1.0
+
+    # State OHE
+    state_col = XGB_STATE_MAP.get(state)
+    if state_col:
+        row[state_col] = 1.0
+
+    return pd.DataFrame([row])[XGB_FEATURE_NAMES]
+
+
+# ── GBM helpers ───────────────────────────────────────────────
+def compute_shap(model):
     try:
         importances = model.named_steps["model"].feature_importances_
         pre = model.named_steps["preprocessor"]
-        num_feats = list(pre.transformers_[0][2])
-        cat_feats  = list(pre.transformers_[1][2])
-        all_feats  = num_feats + cat_feats
+        all_feats = list(pre.transformers_[0][2]) + list(pre.transformers_[1][2])
         total = importances.sum() or 1.0
-        shap = {f: round(float(v / total), 4) for f, v in zip(all_feats, importances)}
+        shap = {f: round(float(v/total),4) for f,v in zip(all_feats, importances)}
         return dict(sorted(shap.items(), key=lambda x: x[1], reverse=True))
     except Exception:
         return {}
@@ -152,15 +264,13 @@ def build_ranked_pathways(model, occupation: str, state: str,
     english_bonus = ENGLISH_POINTS.get(english_level, 0)
     adj_pts = points + english_bonus
     ranked = []
-
-    # ── 189 Independent — one entry, state-agnostic ───────────────────────────
-    df_189 = pd.DataFrame([{
-        "occupation": occupation, "state": state,
-        "points": points, "english_level": english_level,
-        "age": age, "experience": experience,
-    }])
-    p189 = safe_get_proba(model, df_189, 0) # Class 0 is 189
+    base = {"occupation":occupation,"state":state,"points":points,
+            "english_level":english_level,"age":age,"experience":experience}
+    p189 = safe_get_proba(model, pd.DataFrame([base]), 0) # Class 0 is 189
     eligible_189 = adj_pts >= 65 and english_level != "vocational"
+    ranked.append({"visa":"189","visa_name":"189 — Skilled Independent","state":"Any (National)",
+                   "score":round(p189,4) if eligible_189 else 0.0,"eligible":eligible_189,
+                   "note":f"No state nomination needed. Adjusted points: {adj_pts}."})
     
     # Apply scoring layer
     shortage_189 = get_shortage_boost(occupation, "National")
@@ -230,54 +340,40 @@ def build_ranked_pathways(model, occupation: str, state: str,
     return ranked
 
 
-# ── Request schema — 6 fields only ───────────────────────────────────────────
+# ── Request schemas ───────────────────────────────────────────
 class PathwayInput(BaseModel):
+    occupation:    str   = Field(default="261313")
+    state: Literal["NSW","VIC","QLD","WA","SA","TAS","ACT","NT"] = Field(default="NSW")
+    points:        int   = Field(default=80, ge=60, le=140)
+    english_level: Literal["vocational","competent","proficient","superior"] = Field(default="proficient")
+    age:           int   = Field(default=30, ge=18, le=45)
+    experience:    int   = Field(default=5, ge=0, le=20)
+
+class ApprovalInput(BaseModel):
+    visa_type: Literal["189","190","491"] = Field(
+        default="491",
+        description="Visa subclass: 189=Independent, 190=State Nominated, 491=Regional"
+    )
     occupation: str = Field(
-        default="261313",
-        description="ANZSCO 6-digit occupation code",
-        examples=["261313", "254412", "233211", "241411"]
+        default="261313 Software Engineer",
+        description="Full ANZSCO occupation string e.g. '261313 Software Engineer'"
     )
-    state: Literal["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"] = Field(
-        default="NSW",
-        description="Nominated Australian state or territory"
-    )
-    points: int = Field(
-        default=80, ge=60, le=140,
-        description="Skill Select points score (before English level bonus)"
-    )
-    english_level: Literal["vocational", "competent", "proficient", "superior"] = Field(
-        default="proficient",
-        description=(
-            "Australian English proficiency level. "
-            "vocational=IELTS 5 | competent=IELTS 6 (+0 pts) | "
-            "proficient=IELTS 7 (+10 pts) | superior=IELTS 8+ (+20 pts)"
-        )
-    )
-    age: int = Field(default=30, ge=18, le=45, description="Applicant age in years")
-    experience: int = Field(
-        default=5, ge=0, le=20,
-        description="Years of skilled work experience in the nominated occupation"
-    )
+    points:     int   = Field(default=80,  ge=35,  le=140)
+    count_eois: int   = Field(default=50,  ge=1,   le=2000,
+                              description="Count of EOIs in this cohort (same occupation+state+visa).")
+    state: Literal["NSW","VIC","QLD","WA","SA","TAS","ACT","NT"] = Field(default="NSW")
+
+class OccupationSearchInput(BaseModel):
+    query: str = Field(default="", description="Search term — ANZSCO code or occupation name")
 
 
-# ── Route ─────────────────────────────────────────────────────────────────────
+# ── Routes ────────────────────────────────────────────────────
 @router.post("/pathway")
 async def predict_pathway(body: PathwayInput):
-    """
-    POST /api/predict/pathway
-
-    Returns ranked (visa subclass + state) combinations with GBM probability
-    scores, plus SHAP-based feature importance chart data.
-
-    Input: occupation (ANZSCO), state, points, english_level, age, experience
-    Output: ranked pathways array + top_pathway + class_probs + shap_values
-    """
     from main import models
-
     model = models.get("pathway")
     if not model:
-        return {"error": "Pathway model not loaded into memory."}
-
+        return {"error":"Pathway model not loaded. Place model_a.joblib in backend/models/."}
     try:
         english_bonus = ENGLISH_POINTS.get(body.english_level, 0)
         adj_pts = body.points + english_bonus
@@ -312,15 +408,49 @@ async def predict_pathway(body: PathwayInput):
             occupation=body.occupation,
             state=body.state,
             points=body.points,
-            english_level=body.english_level,
-            age=body.age,
-            experience=body.experience,
+            count_eois=body.count_eois,
+            occ_popularity=occ_popularity,
         )
 
-        # SHAP from GBM feature importances
-        shap_values = compute_shap(model, MODEL_FEATURES)
+        prob = round(float(xgb_model.predict_proba(X)[0][1]), 4)
+        pred = 1 if prob >= 0.5 else 0
+
+        if prob >= 0.80:   label, color = "High — Likely Approved",  "green"
+        elif prob >= 0.60: label, color = "Moderate-High",           "blue"
+        elif prob >= 0.40: label, color = "Moderate",                "amber"
+        elif prob >= 0.20: label, color = "Low-Moderate",            "orange"
+        else:              label, color = "Low — Unlikely",          "red"
+
+        # Feature importance from XGB
+        feat_imp = {}
+        try:
+            imp = xgb_model.feature_importances_
+            feat_imp = {n: round(float(v),4) for n,v in zip(XGB_FEATURE_NAMES, imp)}
+            feat_imp = dict(sorted(feat_imp.items(), key=lambda x: x[1], reverse=True)[:10])
+        except Exception:
+            pass
 
         return {
+            "model":          "approval_xgb",
+            "model_loaded":   True,
+            "prediction":     pred,
+            "probability":    prob,
+            "label":          label,
+            "color":          color,
+            "interpretation": "1 = Likely Lodged/Approved · 0 = Likely still Submitted/Waiting",
+            "inputs": {
+                "visa_type":    body.visa_type,
+                "occupation":   body.occupation,
+                "points":       body.points,
+                "count_eois":   body.count_eois,
+                "state":        body.state,
+            },
+            "occupation_enc":      occupation_enc,
+            "occupation_known":    occ_known,
+            "top_feature_importance": feat_imp,
+            "note": (None if occ_known else
+                     f"'{body.occupation}' not found in encoder ({len(occ_encoder.classes_) if occ_encoder else 'N/A'} known occupations). "
+                     "Used fallback encoding — accuracy may be lower."),
             "model":             "pathway",
             "prediction":        top_class_val,
             "confidence":        confidence,
@@ -333,7 +463,24 @@ async def predict_pathway(body: PathwayInput):
             "model_loaded": True,
             "features_used": MODEL_FEATURES,
         }
-
     except Exception as e:
         print(traceback.format_exc())
-        raise HTTPException(500, detail=f"Inference error: {str(e)}")
+        raise HTTPException(500, detail=f"Approval error: {str(e)}")
+
+
+@router.get("/approval/occupations")
+async def list_occupations(q: str = ""):
+    """
+    GET /api/predict/approval/occupations?q=engineer
+    Returns matching occupation strings from encoder.
+    Used by frontend autocomplete.
+    """
+    from main import models
+    enc = models.get("occ_encoder")
+    if not enc:
+        return {"occupations": [], "error": "Encoder not loaded"}
+    classes = list(enc.classes_)
+    if q:
+        ql = q.lower()
+        classes = [c for c in classes if ql in c.lower()]
+    return {"occupations": classes[:50], "total": len(classes)}

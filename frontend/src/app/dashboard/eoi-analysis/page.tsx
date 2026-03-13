@@ -19,6 +19,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
+import { useDataCache } from "@/lib/DataCacheContext";
 import {
   C,
   Card,
@@ -47,6 +48,7 @@ const selectStyle = {
 
 export default function EOIAnalysis() {
   // Filters
+  const { get } = useDataCache();
   const [yearFilter, setYearFilter] = useState<number | null>(null);
   const [stateFilter, setStateFilter] = useState("");
   const [visaFilter, setVisaFilter] = useState("");
@@ -66,13 +68,10 @@ export default function EOIAnalysis() {
 
   // Summary + monthly — once only
   useEffect(() => {
-    fetch(`${API}/api/data/summary`)
-      .then((r) => r.json())
+    get(`/api/data/summary`)
       .then(setSummary)
       .finally(() => setLoadingSummary(false));
-    fetch(`${API}/api/data/eoi/monthly`)
-      .then((r) => r.json())
-      .then((d) => setMonthly(d.records || []));
+    get(`/api/data/eoi/monthly`).then((d) => setMonthly(d.records || []));
   }, []);
 
   // Occupations — refetch when year, state, visa, limit changes
@@ -82,8 +81,7 @@ export default function EOIAnalysis() {
     if (yearFilter) p.append("year", String(yearFilter));
     if (stateFilter) p.append("state", stateFilter);
     if (visaFilter) p.append("visa_type", visaFilter);
-    fetch(`${API}/api/data/eoi/occupations?${p}`)
-      .then((r) => r.json())
+    get(`/api/data/eoi/occupations?${p}`)
       .then((d) => setOccupations(d.records || []))
       .finally(() => setLoadingOcc(false));
   }, [yearFilter, stateFilter, visaFilter, occLimit]);
@@ -94,8 +92,7 @@ export default function EOIAnalysis() {
     const p = new URLSearchParams();
     if (visaFilter) p.append("visa_type", visaFilter);
     if (stateFilter) p.append("state", stateFilter);
-    fetch(`${API}/api/data/eoi/points?${p}`)
-      .then((r) => r.json())
+    get(`/api/data/eoi/points?${p}`)
       .then((d) => setPoints(d.records || []))
       .finally(() => setLoadingPoints(false));
   }, [visaFilter, stateFilter]);

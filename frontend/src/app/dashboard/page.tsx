@@ -18,6 +18,7 @@ import {
   Legend,
   Cell,
 } from "recharts";
+import { useDataCache } from "@/lib/DataCacheContext";
 import { C, Card, ChartTip } from "@/components/ui";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -131,6 +132,7 @@ const sel: any = {
 export default function GlobalOverview() {
   const router = useRouter();
 
+  const { get } = useDataCache();
   const [yearFilter, setYearFilter] = useState<number | null>(null);
   const [stateFilter, setStateFilter] = useState("");
   const [visaFilter, setVisaFilter] = useState("");
@@ -154,14 +156,12 @@ export default function GlobalOverview() {
   // Fire all background requests in parallel
   useEffect(() => {
     Promise.allSettled([
-      fetch(`${API}/api/data/summary`).then((r) => r.json()),
-      fetch(`${API}/api/data/eoi/monthly`).then((r) => r.json()),
-      fetch(`${API}/api/data/quota`).then((r) => r.json()),
-      fetch(`${API}/api/data/osl-trend`).then((r) => r.json()),
-      fetch(`${API}/api/data/nero-summary`).then((r) => r.json()),
-      fetch(
-        `${API}/api/data/shortage-forecast?state=NSW&sort_year=2026&limit=8`,
-      ).then((r) => r.json()),
+      get(`/api/data/summary`),
+      get(`/api/data/eoi/monthly`),
+      get(`/api/data/quota`),
+      get(`/api/data/osl-trend`),
+      get(`/api/data/nero-summary`),
+      get(`/api/data/shortage-forecast?state=NSW&sort_year=2026&limit=8`),
     ]).then(([s, m, q, osl, nero, fc]) => {
       if (s.status === "fulfilled") {
         setSummary(s.value);
@@ -182,8 +182,7 @@ export default function GlobalOverview() {
     if (yearFilter) p.append("year", String(yearFilter));
     if (stateFilter) p.append("state", stateFilter);
     if (visaFilter) p.append("visa_type", visaFilter);
-    fetch(`${API}/api/data/eoi/occupations?${p}`)
-      .then((r) => r.json())
+    get(`/api/data/eoi/occupations?${p}`)
       .then((d) => setOccs(d.records || []))
       .finally(() => setLoadOccs(false));
   }, [yearFilter, stateFilter, visaFilter, limit]);
