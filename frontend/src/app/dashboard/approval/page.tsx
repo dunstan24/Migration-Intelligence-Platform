@@ -659,21 +659,58 @@ export default function ApprovalScorer() {
             {/* Points */}
             <div style={{ marginBottom: 13 }}>
               <FieldLabel text="Points Score" sub={`${form.points} pts`} />
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <button
+                  onClick={() => set("points", Math.max(35, form.points - 5))}
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: 6,
+                    border: `1px solid ${C.border}`,
+                    background: "rgba(255,255,255,0.05)",
+                    color: C.text,
+                    cursor: "pointer",
+                    fontSize: 18,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  −
+                </button>
                 <input
                   type="range"
                   min={35}
                   max={140}
+                  step={5}
                   value={form.points}
                   onChange={(e) => set("points", Number(e.target.value))}
                   style={{ flex: 1, accentColor: C.blue }}
                 />
+                <button
+                  onClick={() => set("points", Math.min(140, form.points + 5))}
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: 6,
+                    border: `1px solid ${C.border}`,
+                    background: "rgba(255,255,255,0.05)",
+                    color: C.text,
+                    cursor: "pointer",
+                    fontSize: 18,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  +
+                </button>
                 <span
                   style={{
                     fontSize: 16,
                     fontWeight: 800,
                     color: C.blue,
-                    minWidth: 36,
+                    minWidth: 32,
                     textAlign: "right",
                   }}
                 >
