@@ -199,18 +199,24 @@ class PathwayInput(BaseModel):
     experience:    int   = Field(default=5, ge=0, le=20)
 
 class ApprovalInput(BaseModel):
-    visa_type: Literal["189","190","491"] = Field(
-        default="491",
-        description="Visa subclass: 189=Independent, 190=State Nominated, 491=Regional"
-    )
-    occupation: str = Field(
-        default="261313 Software Engineer",
-        description="Full ANZSCO occupation string e.g. '261313 Software Engineer'"
-    )
-    points:     int   = Field(default=80,  ge=35,  le=140)
-    count_eois: int   = Field(default=50,  ge=1,   le=2000,
-                              description="Count of EOIs in this cohort (same occupation+state+visa).")
+    # Core inputs
+    occupation: str   = Field(default="261313 Software Engineer")
+    visa_type:  str   = Field(default="491SNR State or Territory Nominated - Regional",
+                              description="Full visa type string or short code (189/190/491)")
+    points:     int   = Field(default=80, ge=35, le=140)
     state: Literal["NSW","VIC","QLD","WA","SA","TAS","ACT","NT"] = Field(default="NSW")
+    # EOI statistical features (auto-filled from lookup or manual input)
+    avg_count_submitted:   float = Field(default=50.0)
+    max_count_submitted:   float = Field(default=100.0)
+    min_count_submitted:   float = Field(default=10.0)
+    std_count_submitted:   float = Field(default=20.0)
+    trend_submitted:       float = Field(default=0.0)
+    last_count_submitted:  float = Field(default=50.0)
+    first_count_submitted: float = Field(default=50.0)
+    total_months_observed: int   = Field(default=12)
+    growth_rate:           float = Field(default=1.0)
+    # Legacy field kept for backward compat
+    count_eois:            int   = Field(default=50, ge=1, le=2000)
 
 class OccupationSearchInput(BaseModel):
     query: str = Field(default="", description="Search term — ANZSCO code or occupation name")
@@ -281,14 +287,58 @@ async def predict_approval(body: ApprovalInput):
                     occ_known = True
                     occ_popularity = round(1.0 - occupation_enc / max(len(classes), 1), 4)
 
-        X = build_xgb_input(
-            occupation_enc=occupation_enc,
-            visa_type=body.visa_type,
-            state=body.state,
-            points=body.points,
-            count_eois=body.count_eois,
-            occ_popularity=occ_popularity,
-        )
+        # Use exact same feature engineering as app.py
+        import numpy as _np
+        volatility     = body.std_count_submitted / (body.avg_count_submitted + 1)
+        growth_log     = float(_np.log1p(body.growth_rate))
+        points_x_count = body.points * float(_np.log1p(body.avg_count_submitted))
+        is_small       = int(body.avg_count_submitted < 20)
+        is_large       = int(body.avg_count_submitted > 100)
+        import pandas as _pd
+        points_bucket  = int(_pd.cut([body.points], bins=[0,60,70,80,90,100,999],
+                             labels=[1,2,3,4,5,6])[0])
+
+        # Normalise visa_type — accept both short and full string
+        _VISA_FULL = {
+            "189": "189PTS Points-Tested Stream",
+            "190": "190SAS Skilled Australian Sponsored",
+            "491": "491SNR State or Territory Nominated - Regional",
+            "491fsr": "491FSR Family Sponsored - Regional",
+        }
+        visa_full = _VISA_FULL.get(body.visa_type, body.visa_type)
+
+        row = {
+            "Points":                 float(body.points),
+            "total_months_observed":  float(body.total_months_observed),
+            "avg_count_submitted":    body.avg_count_submitted,
+            "max_count_submitted":    body.max_count_submitted,
+            "min_count_submitted":    body.min_count_submitted,
+            "std_count_submitted":    body.std_count_submitted,
+            "trend_submitted":        body.trend_submitted,
+            "last_count_submitted":   body.last_count_submitted,
+            "first_count_submitted":  body.first_count_submitted,
+            "growth_rate":            body.growth_rate,
+            "occupation_enc":         float(occupation_enc),
+            "points_bucket":          float(points_bucket),
+            "volatility":             volatility,
+            "count_vs_state_avg":     1.0,
+            "count_vs_occ_avg":       1.0,
+            "is_small_queue":         float(is_small),
+            "is_large_queue":         float(is_large),
+            "growth_rate_log":        growth_log,
+            "points_x_count":         points_x_count,
+            "occ_popularity":         occ_popularity,
+        }
+        VISA_TYPES = ["189PTS Points-Tested Stream","190SAS Skilled Australian Sponsored",
+                      "491FSR Family Sponsored - Regional",
+                      "491SNR State or Territory Nominated - Regional"]
+        STATES_OHE = ["ACT","NSW","NT","QLD","SA","TAS","VIC","WA"]
+        for vt in VISA_TYPES:
+            row[f"Visa Type_{vt}"] = 1.0 if vt == visa_full else 0.0
+        for st in STATES_OHE:
+            row[f"Nominated State_{st}"] = 1.0 if st == body.state else 0.0
+
+        X = _pd.DataFrame([row])[XGB_FEATURE_NAMES]
 
         prob = round(float(xgb_model.predict_proba(X)[0][1]), 4)
         pred = 1 if prob >= 0.5 else 0
@@ -351,3 +401,71 @@ async def list_occupations(q: str = ""):
         ql = q.lower()
         classes = [c for c in classes if ql in c.lower()]
     return {"occupations": classes[:50], "total": len(classes)}
+
+
+@router.get("/approval/lookup")
+async def approval_lookup(occupation: str, visa_type: str, state: str, points: int):
+    """
+    GET /api/predict/approval/lookup?occupation=...&visa_type=...&state=...&points=...
+    Returns historical EOI stats for the given combination from df_filtered.csv.
+    Mirrors the /lookup endpoint from app.py.
+    """
+    from main import models
+    df_hist = models.get("df_hist")
+    if df_hist is None:
+        return {"found": False, "message": "Historical data not loaded."}
+
+    # Normalise visa_type — accept short ("190") or full string
+    VISA_FULL = {
+        "189": "189PTS Points-Tested Stream",
+        "190": "190SAS Skilled Australian Sponsored",
+        "491": "491SNR State or Territory Nominated - Regional",
+        "491fsr": "491FSR Family Sponsored - Regional",
+    }
+    visa_full = VISA_FULL.get(visa_type, visa_type)
+    # Also accept if user passes full string already
+    if visa_type in ["189PTS Points-Tested Stream",
+                     "190SAS Skilled Australian Sponsored",
+                     "491FSR Family Sponsored - Regional",
+                     "491SNR State or Territory Nominated - Regional"]:
+        visa_full = visa_type
+
+    try:
+        mask = (
+            (df_hist["Occupation"]      == occupation) &
+            (df_hist["Visa Type"]       == visa_full)  &
+            (df_hist["Nominated State"] == state)      &
+            (df_hist["Points"]          == points)     &
+            (df_hist["EOI Status"]      == "SUBMITTED")
+        )
+        subset = df_hist[mask]["Count EOIs"]
+
+        if len(subset) == 0:
+            return {"found": False, "message": "No historical data for this combination. Using defaults."}
+
+        first = float(subset.iloc[0])
+        last  = float(subset.iloc[-1])
+        import numpy as np
+
+        return {
+            "found":                  True,
+            "total_months_observed":  int(len(subset)),
+            "avg_count_submitted":    round(float(subset.mean()), 1),
+            "max_count_submitted":    round(float(subset.max()),  1),
+            "min_count_submitted":    round(float(subset.min()),  1),
+            "std_count_submitted":    round(float(subset.std()), 1) if len(subset) > 1 else 0.0,
+            "trend_submitted":        round(last - first, 1),
+            "last_count_submitted":   round(last, 1),
+            "first_count_submitted":  round(first, 1),
+            "growth_rate":            round(last / first, 2) if first > 0 else 1.0,
+        }
+    except Exception as e:
+        return {"found": False, "message": str(e)}
+
+
+@router.get("/approval/threshold")
+async def approval_threshold():
+    """Returns the model's best_threshold value."""
+    from main import models
+    threshold = models.get("threshold", 0.5)
+    return {"threshold": threshold}

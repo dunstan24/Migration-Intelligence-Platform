@@ -80,6 +80,40 @@ async def lifespan(app: FastAPI):
         os.path.join(models_dir, "encoder_occupation.pkl"), "occupation encoder"
     )
 
+    # Historical EOI data for lookup endpoint
+    df_path = os.path.join(models_dir, "..", "data", "processed", "df_filtered.csv")
+    # Also try same folder as models
+    alt_path = os.path.join(models_dir, "df_filtered.csv")
+    for p in [df_path, alt_path]:
+        if os.path.exists(p):
+            try:
+                import pandas as pd
+                df = pd.read_csv(p, parse_dates=["As At Month"])
+                df["Count EOIs"] = pd.to_numeric(df["Count EOIs"], errors="coerce").fillna(10)
+                df = df.sort_values(["Occupation","Visa Type","Nominated State","Points","As At Month"])
+                models["df_hist"] = df
+                logger.info(f"✅ Loaded df_hist ({len(df):,} rows from {p})")
+                break
+            except Exception as e:
+                logger.warning(f"⚠️  Could not load df_filtered.csv: {e}")
+    else:
+        models["df_hist"] = None
+        logger.warning("⚠️  df_filtered.csv not found — lookup endpoint will return not-found")
+
+    # Threshold JSON
+    models["threshold"] = 0.5
+    for tp in [os.path.join(models_dir, "threshold.json"),
+               os.path.join(models_dir, "..", "threshold.json")]:
+        if os.path.exists(tp):
+            try:
+                import json
+                with open(tp) as f:
+                    models["threshold"] = json.load(f).get("best_threshold", 0.5)
+                logger.info(f"✅ Loaded threshold: {models['threshold']} ({tp})")
+                break
+            except Exception as e:
+                logger.warning(f"⚠️  Could not load threshold.json: {e}")
+
     loaded = {k: v is not None for k, v in models.items()}
     logger.info(f"🚀 Interlace API started · models: {loaded}")
     yield
