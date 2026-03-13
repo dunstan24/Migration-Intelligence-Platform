@@ -376,10 +376,15 @@ class OccupationSearchInput(BaseModel):
 # ── Routes ────────────────────────────────────────────────────
 @router.post("/pathway")
 async def predict_pathway(body: PathwayInput):
+    """
+    POST /api/predict/pathway
+    Returns ranked (visa subclass + state) combinations with GBM probability.
+    """
     from main import models
     model = models.get("pathway")
     if not model:
-        return {"error":"Pathway model not loaded. Place model_a.joblib in backend/models/."}
+        return {"error": "Pathway model not loaded. Place model_a.joblib in backend/models/."}
+
     try:
         english_bonus = ENGLISH_POINTS.get(body.english_level, 0)
         adj_pts = body.points + english_bonus
@@ -468,32 +473,86 @@ async def predict_pathway(body: PathwayInput):
             occupation=body.occupation,
             state=body.state,
             points=body.points,
-            count_eois=body.count_eois,
-            occ_popularity=occ_popularity,
+            english_level=body.english_level,
+            age=body.age,
+            experience=body.experience,
         )
 >>>>>>> b657e0570f8a8df17aa2734ad1ec5734ae9c3266
 
-        prob = round(float(xgb_model.predict_proba(X)[0][1]), 4)
+        # SHAP from GBM feature importances
+        shap_values = compute_shap(model)
+
+        return {
+            "model":             "pathway",
+            "prediction":        top_class_val,
+            "confidence":        confidence,
+            "adjusted_points":   adj_pts,
+            "english_bonus_pts": english_bonus,
+            "class_probs":       class_probs,
+            "top_pathway":       ranked[0],
+            "pathways":          ranked,
+            "shap_values":       shap_values,
+        }
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(500, detail=f"Pathway inference error: {str(e)}")
+
+
+@router.post("/approval")
+async def predict_approval(body: ApprovalInput):
+    """
+    POST /api/predict/approval
+    Returns EOI approval probability using XGBoost model.
+    """
+    from main import models
+    xgb_model = models.get("approval")
+    occ_encoder = models.get("occ_encoder")
+
+    if not xgb_model:
+        return {"error": "Approval (XGB) model not loaded."}
+
+    try:
+        # 1. Encode occupation
+        occ_known = True
+        try:
+            occupation_enc = int(occ_encoder.transform([body.occupation])[0])
+        except Exception:
+            occupation_enc = 0  # Fallback for unknown
+            occ_known = False
+
+        # 2. Build XGB input
+        # Note: occ_popularity is a placeholder since we don't have a real lookup here
+        df_xgb = build_xgb_input(
+            occupation_enc=occupation_enc,
+            visa_type=body.visa_type,
+            state=body.state,
+            points=body.points,
+            count_eois=body.count_eois,
+            occ_popularity=0.5 
+        )
+
+        # 3. Predict
+        prob = round(float(xgb_model.predict_proba(df_xgb)[0][1]), 4)
         pred = 1 if prob >= 0.5 else 0
 
+        # 4. Labeling
         if prob >= 0.80:   label, color = "High — Likely Approved",  "green"
         elif prob >= 0.60: label, color = "Moderate-High",           "blue"
         elif prob >= 0.40: label, color = "Moderate",                "amber"
         elif prob >= 0.20: label, color = "Low-Moderate",            "orange"
         else:              label, color = "Low — Unlikely",          "red"
 
-        # Feature importance from XGB
+        # 5. Feature importance
         feat_imp = {}
         try:
             imp = xgb_model.feature_importances_
-            feat_imp = {n: round(float(v),4) for n,v in zip(XGB_FEATURE_NAMES, imp)}
+            feat_imp = {n: round(float(v), 4) for n, v in zip(XGB_FEATURE_NAMES, imp)}
             feat_imp = dict(sorted(feat_imp.items(), key=lambda x: x[1], reverse=True)[:10])
         except Exception:
             pass
 
         return {
             "model":          "approval_xgb",
-            "model_loaded":   True,
             "prediction":     pred,
             "probability":    prob,
             "label":          label,
@@ -506,27 +565,12 @@ async def predict_pathway(body: PathwayInput):
                 "count_eois":   body.count_eois,
                 "state":        body.state,
             },
-            "occupation_enc":      occupation_enc,
-            "occupation_known":    occ_known,
+            "occupation_known": occ_known,
             "top_feature_importance": feat_imp,
-            "note": (None if occ_known else
-                     f"'{body.occupation}' not found in encoder ({len(occ_encoder.classes_) if occ_encoder else 'N/A'} known occupations). "
-                     "Used fallback encoding — accuracy may be lower."),
-            "model":             "pathway",
-            "prediction":        top_class_val,
-            "confidence":        confidence,
-            "adjusted_points":   adj_pts,
-            "english_bonus_pts": english_bonus,
-            "class_probs":       class_probs,
-            "top_pathway":  ranked[0],
-            "pathways":     ranked,
-            "shap_values":  shap_values,
-            "model_loaded": True,
-            "features_used": MODEL_FEATURES,
         }
     except Exception as e:
         print(traceback.format_exc())
-        raise HTTPException(500, detail=f"Approval error: {str(e)}")
+        raise HTTPException(500, detail=f"Approval inference error: {str(e)}")
 
 
 @router.get("/approval/occupations")
