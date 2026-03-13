@@ -392,7 +392,7 @@ export default function ApprovalScorer() {
     visa_type: "491",
     occupation: "261313 Software Engineer",
     points: 80,
-    count_eois: 50,
+    count_eois: 1068,// karena min dan max eoi count dari 10 hingga 2125,1068 dijadikan sebagai threshold
     state: "NSW",
   });
   const [result, setResult] = useState<any>(null);
@@ -552,21 +552,58 @@ export default function ApprovalScorer() {
             {/* Points */}
             <div style={{ marginBottom: 14 }}>
               <FieldLabel text="Points Score" sub={`${form.points} pts`} />
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <button
+                  onClick={() => set("points", Math.max(35, form.points - 5))}
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: 6,
+                    border: `1px solid ${C.border}`,
+                    background: "rgba(255,255,255,0.05)",
+                    color: C.text,
+                    cursor: "pointer",
+                    fontSize: 18,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  −
+                </button>
                 <input
                   type="range"
                   min={35}
                   max={140}
+                  step={5}
                   value={form.points}
                   onChange={(e) => set("points", Number(e.target.value))}
                   style={{ flex: 1, accentColor: C.blue }}
                 />
+                <button
+                  onClick={() => set("points", Math.min(140, form.points + 5))}
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: 6,
+                    border: `1px solid ${C.border}`,
+                    background: "rgba(255,255,255,0.05)",
+                    color: C.text,
+                    cursor: "pointer",
+                    fontSize: 18,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  +
+                </button>
                 <span
                   style={{
                     fontSize: 16,
                     fontWeight: 800,
                     color: C.blue,
-                    minWidth: 36,
+                    minWidth: 32,
                     textAlign: "right",
                   }}
                 >
@@ -609,41 +646,6 @@ export default function ApprovalScorer() {
               </div>
             </div>
 
-            {/* Count EOIs */}
-            <div style={{ marginBottom: 14 }}>
-              <FieldLabel
-                text="Count EOIs in Cohort"
-                sub="How many EOIs in same occupation/state/visa group"
-              />
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <input
-                  type="range"
-                  min={1}
-                  max={500}
-                  value={form.count_eois}
-                  onChange={(e) => set("count_eois", Number(e.target.value))}
-                  style={{ flex: 1, accentColor: C.cyan }}
-                />
-                <span
-                  style={{
-                    fontSize: 16,
-                    fontWeight: 800,
-                    color: C.cyan,
-                    minWidth: 36,
-                    textAlign: "right",
-                  }}
-                >
-                  {form.count_eois}
-                </span>
-              </div>
-              <p style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>
-                {form.count_eois <= 20
-                  ? "↓ Small queue — typically higher probability"
-                  : form.count_eois >= 100
-                    ? "↑ Large queue — more competition"
-                    : "Medium queue size"}
-              </p>
-            </div>
 
             {/* State */}
             <div style={{ marginBottom: 20 }}>
@@ -911,37 +913,6 @@ export default function ApprovalScorer() {
                 </div>
               </div>
 
-              {/* Feature importance */}
-              {Object.keys(topImp).length > 0 && (
-                <Card>
-                  <p
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 700,
-                      color: C.text,
-                      marginBottom: 14,
-                    }}
-                  >
-                    Top Feature Importances
-                  </p>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: "0 28px",
-                    }}
-                  >
-                    {Object.entries(topImp).map(([name, val]) => (
-                      <ImpBar
-                        key={name}
-                        name={name}
-                        value={Number(val)}
-                        max={impMax}
-                      />
-                    ))}
-                  </div>
-                </Card>
-              )}
             </>
           )}
 
