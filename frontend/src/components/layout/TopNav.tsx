@@ -8,6 +8,7 @@ const NAV = [
   { label: "Shortage", href: "/dashboard/shortage" },
   { label: "Predictors", href: "/dashboard/predictors" },
   { label: "Pathway", href: "/dashboard/pathway" },
+  { label: "Approval", href: "/dashboard/approval" },
   { label: "Chat", href: "/dashboard/chat" },
   { label: "Reports", href: "/dashboard/reports" },
   { label: "Admin", href: "/dashboard/admin" },
@@ -27,13 +28,15 @@ export default function TopNav() {
             ? "Predictors"
             : pathname.startsWith("/dashboard/pathway")
               ? "Pathway"
-              : pathname.startsWith("/dashboard/chat")
-                ? "Chat"
-                : pathname.startsWith("/dashboard/reports")
-                  ? "Reports"
-                  : pathname.startsWith("/dashboard/admin")
-                    ? "Admin"
-                    : "Dashboard";
+              : pathname.startsWith("/dashboard/approval")
+                ? "Approval"
+                : pathname.startsWith("/dashboard/chat")
+                  ? "Chat"
+                  : pathname.startsWith("/dashboard/reports")
+                    ? "Reports"
+                    : pathname.startsWith("/dashboard/admin")
+                      ? "Admin"
+                      : "Dashboard";
 
   return (
     <nav

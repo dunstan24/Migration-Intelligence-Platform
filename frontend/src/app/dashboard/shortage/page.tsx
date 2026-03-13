@@ -21,6 +21,7 @@ import {
   Legend,
   ReferenceLine,
 } from "recharts";
+import { useDataCache } from "@/lib/DataCacheContext";
 import { C, Card, ChartTip, PageWrapper } from "@/components/ui";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -143,6 +144,7 @@ function SectionTitle({ title, sub }: { title: string; sub?: string }) {
 // ══════════════════════════════════════════════════════════════════
 
 function ForecastTab() {
+  const { get } = useDataCache();
   const [state, setState] = useState("NSW");
   const [sortYr, setSortYr] = useState("2026");
   const [search, setSearch] = useState("");
@@ -157,10 +159,9 @@ function ForecastTab() {
   useEffect(() => {
     setLoading(true);
     setError("");
-    fetch(
-      `${API}/api/data/shortage-forecast?state=${state}&limit=200&sort_year=${sortYr}`,
+    get(
+      `/api/data/shortage-forecast?state=${state}&limit=200&sort_year=${sortYr}`,
     )
-      .then((r) => r.json())
       .then((d) => {
         setData(d);
         setLoading(false);
@@ -178,10 +179,9 @@ function ForecastTab() {
       return;
     }
     setSearching(true);
-    fetch(
-      `${API}/api/data/shortage-forecast?limit=500&sort_year=${sortYr}&search=${encodeURIComponent(search)}`,
+    get(
+      `/api/data/shortage-forecast?limit=500&sort_year=${sortYr}&search=${encodeURIComponent(search)}`,
     )
-      .then((r) => r.json())
       .then((d) => {
         setSearchData(d);
         setSearching(false);
@@ -376,7 +376,6 @@ function ForecastTab() {
                 marginBottom: 16,
               }}
             >
-              {/* Top 10 highest risk occupations 
               <Card>
                 <SectionTitle
                   title={`Top 10 Highest Risk — ${state}, ${sortYr}`}
@@ -522,7 +521,6 @@ function ForecastTab() {
                   </AreaChart>
                 </ResponsiveContainer>
               </Card>
-              */}
             </div>
           )}
 
@@ -1201,6 +1199,7 @@ function HistoricalTab({ trend, heatmap, year, setYear }: any) {
 // ══════════════════════════════════════════════════════════════════
 
 export default function ShortageAnalysis() {
+  const { get } = useDataCache();
   const [tab, setTab] = useState<"forecast" | "historical">("forecast");
   const [trend, setTrend] = useState<any>(null);
   const [heatmap, setHeatmap] = useState<any>(null);
@@ -1208,8 +1207,8 @@ export default function ShortageAnalysis() {
 
   useEffect(() => {
     Promise.all([
-      fetch(`${API}/api/data/osl-trend`).then((r) => r.json()),
-      fetch(`${API}/api/data/shortage-heatmap?year=2025`).then((r) => r.json()),
+      get(`/api/data/osl-trend`),
+      get(`/api/data/shortage-heatmap?year=2025`),
     ]).then(([t, h]) => {
       setTrend(t);
       setHeatmap(h);
@@ -1217,9 +1216,7 @@ export default function ShortageAnalysis() {
   }, []);
 
   useEffect(() => {
-    fetch(`${API}/api/data/shortage-heatmap?year=${year}`)
-      .then((r) => r.json())
-      .then((h) => setHeatmap(h));
+    get(`/api/data/shortage-heatmap?year=${year}`).then((h) => setHeatmap(h));
   }, [year]);
 
   return (

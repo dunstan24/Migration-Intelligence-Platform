@@ -2,7 +2,13 @@
 /**
  * Occupation Detail Page
  * Route: /dashboard/occupation/[anzsco]
- * Fetches: GET /api/data/occupation/{anzsco}
+ *
+ * APIs (all real data):
+ *   GET /api/data/occupation/{anzsco}          → EOI, JSA, OSL, workforce, demos
+ *   GET /api/data/quota                        → state quota lookup
+ *   GET /api/data/nero/{anzsco4}               → regional NERO trend
+ *   GET /api/data/nero-sa4/{anzsco4}           → SA4 employment breakdown
+ *   GET /api/data/shortage-forecast/{anzsco}   → ML 5yr shortage forecast per state
  */
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -22,14 +28,20 @@ import {
   PieChart,
   Pie,
   Legend,
+  RadarChart,
+  Radar,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
 } from "recharts";
+import { useDataCache } from "@/lib/DataCacheContext";
 import { C, Card, ChartTip } from "@/components/ui";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 const fmt = (n: number) => n?.toLocaleString() ?? "—";
 const fmtK = (n: number) =>
   n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n ?? 0);
-const pct = (n: number) => `${(n * 100).toFixed(0)}%`;
+const pct = (n: number) => `${((n ?? 0) * 100).toFixed(1)}%`;
 
 const VISA_COLORS: Record<string, string> = {
   "190": C.blue,
@@ -37,25 +49,35 @@ const VISA_COLORS: Record<string, string> = {
   "189": C.green,
   "188": C.amber,
 };
-const STATE_ORDER = ["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"];
-
-const SHORTAGE_LABEL: Record<string, { label: string; color: string }> = {
-  S: { label: "Shortage", color: C.red },
-  NS: { label: "No Shortage", color: C.green },
-  MR: { label: "Met & Rising", color: C.amber },
+const STATE_COLORS: Record<string, string> = {
+  NSW: "#2a8bff",
+  VIC: "#8b5cf6",
+  QLD: "#f59e0b",
+  SA: "#ef4444",
+  WA: "#10b981",
+  TAS: "#06b6d4",
+  NT: "#f97316",
+  ACT: "#ec4899",
 };
+const STATE_ORDER = ["NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"];
 const PALETTE = [
   C.blue,
   C.purple,
   C.green,
   C.amber,
   C.cyan,
-  C.red,
+  "#ef4444",
   "#ec4899",
   "#14b8a6",
 ];
 
-// ── Sub-components ──────────────────────────────────────────────────────────
+const SHORTAGE_LABEL: Record<string, { label: string; color: string }> = {
+  S: { label: "Shortage", color: "#ef4444" },
+  NS: { label: "No Shortage", color: C.green },
+  MR: { label: "Met & Rising", color: C.amber },
+};
+
+// ── Sub-components ────────────────────────────────────────────
 
 function StatBox({ label, value, sub, color }: any) {
   return (
@@ -65,6 +87,7 @@ function StatBox({ label, value, sub, color }: any) {
         border: `1px solid ${C.border}`,
         borderRadius: 10,
         padding: "14px 16px",
+        borderTop: `2px solid ${color}40`,
       }}
     >
       <p
@@ -90,51 +113,83 @@ function StatBox({ label, value, sub, color }: any) {
       >
         {value}
       </p>
-      {sub && <p style={{ fontSize: 11, color: "#374151" }}>{sub}</p>}
+      {sub && <p style={{ fontSize: 11, color: C.muted }}>{sub}</p>}
     </div>
   );
 }
 
-function SectionHeader({
+function SH({
   title,
   color = C.blue,
+  sub,
 }: {
   title: string;
   color?: string;
+  sub?: string;
 }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        marginBottom: 14,
-      }}
-    >
+    <div style={{ marginBottom: 14 }}>
       <div
-        style={{ width: 3, height: 16, background: color, borderRadius: 2 }}
-      />
-      <p style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{title}</p>
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: sub ? 2 : 0,
+        }}
+      >
+        <div
+          style={{ width: 3, height: 16, background: color, borderRadius: 2 }}
+        />
+        <p style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{title}</p>
+      </div>
+      {sub && (
+        <p style={{ fontSize: 10, color: C.muted, paddingLeft: 11 }}>{sub}</p>
+      )}
     </div>
   );
 }
 
-function NoData({ label }: { label: string }) {
+function NoData({ msg }: { msg: string }) {
   return (
     <div style={{ padding: "28px 0", textAlign: "center" }}>
-      <p style={{ fontSize: 12, color: "#1f2937" }}>{label}</p>
+      <p style={{ fontSize: 12, color: C.muted }}>{msg}</p>
     </div>
   );
 }
 
-// ── Main ────────────────────────────────────────────────────────────────────
+function MlBadge({ prob }: { prob: number }) {
+  const p = prob ?? 0;
+  const col = p >= 0.65 ? "#ef4444" : p >= 0.4 ? C.amber : C.green;
+  const lbl = p >= 0.65 ? "High Risk" : p >= 0.4 ? "Medium" : "Low Risk";
+  return (
+    <span
+      style={{
+        fontSize: 10,
+        fontWeight: 700,
+        color: col,
+        background: `${col}18`,
+        padding: "2px 8px",
+        borderRadius: 4,
+        border: `1px solid ${col}40`,
+      }}
+    >
+      {lbl} {(p * 100).toFixed(0)}%
+    </span>
+  );
+}
+
+// ── Main ──────────────────────────────────────────────────────
+
 export default function OccupationDetail() {
   const { anzsco } = useParams<{ anzsco: string }>();
   const router = useRouter();
+
+  const { get } = useDataCache();
   const [data, setData] = useState<any>(null);
   const [quota, setQuota] = useState<any>(null);
   const [nero, setNero] = useState<any>(null);
   const [neroSa4, setNeroSa4] = useState<any>(null);
+  const [mlFcast, setMlFcast] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("eoi");
@@ -142,25 +197,34 @@ export default function OccupationDetail() {
   useEffect(() => {
     if (!anzsco) return;
     setLoading(true);
-    const anzsco4 = anzsco.slice(0, 4);
-    Promise.all([
-      fetch(`${API}/api/data/occupation/${anzsco}`).then((r) => r.json()),
-      fetch(`${API}/api/data/quota`).then((r) => r.json()),
-      fetch(`${API}/api/data/nero/${anzsco4}`).then((r) => r.json()),
-      fetch(`${API}/api/data/nero-sa4/${anzsco4}`).then((r) => r.json()),
+    const a4 = anzsco.slice(0, 4);
+    Promise.allSettled([
+      get(`/api/data/occupation/${anzsco}`),
+      get(`/api/data/quota`),
+      get(`/api/data/nero/${a4}`),
+      get(`/api/data/nero-sa4/${a4}`),
+      get(`/api/data/shortage-forecast/${a4}`),
     ])
-      .then(([occ, q, n, ns]) => {
-        if (occ.error) setError(occ.error);
-        else setData(occ);
-        const lookup: Record<string, Record<string, number>> = {};
-        for (const s of q.state_allocation || []) {
-          lookup[s.state] = { "190": s.visa_190, "491": s.visa_491 };
+      .then(([occ, q, n, ns, fc]) => {
+        if (occ.status === "fulfilled") {
+          if (occ.value.error) setError(occ.value.error);
+          else setData(occ.value);
         }
-        setQuota(lookup);
-        setNero(n.error ? null : n);
-        setNeroSa4(ns.error ? null : ns);
+        if (q.status === "fulfilled") {
+          const lookup: Record<string, Record<string, number>> = {};
+          for (const s of q.value.state_allocation || [])
+            lookup[s.state] = { "190": s.visa_190, "491": s.visa_491 };
+          setQuota(lookup);
+        }
+        if (n.status === "fulfilled" && !n.value.error) setNero(n.value);
+        if (ns.status === "fulfilled" && !ns.value.error) setNeroSa4(ns.value);
+        if (
+          fc.status === "fulfilled" &&
+          !fc.value.error &&
+          fc.value.records?.length
+        )
+          setMlFcast(fc.value);
       })
-      .catch(() => setError("Failed to load"))
       .finally(() => setLoading(false));
   }, [anzsco]);
 
@@ -174,13 +238,13 @@ export default function OccupationDetail() {
           fontSize: 14,
         }}
       >
-        Loading occupation data...
+        Loading occupation data…
       </div>
     );
   if (error || !data)
     return (
       <div style={{ padding: 40, textAlign: "center" }}>
-        <p style={{ color: C.red, marginBottom: 12 }}>
+        <p style={{ color: "#ef4444", marginBottom: 12 }}>
           Occupation not found: {anzsco}
         </p>
         <button
@@ -195,11 +259,12 @@ export default function OccupationDetail() {
             fontSize: 12,
           }}
         >
-          ← Back to Dashboard
+          ← Back
         </button>
       </div>
     );
 
+  // ── Derived values ─────────────────────────────────────────
   const invRate = (data.invitation_rate || 0) * 100;
   const rateColor =
     invRate >= 50
@@ -208,9 +273,8 @@ export default function OccupationDetail() {
         ? C.blue
         : invRate >= 5
           ? C.amber
-          : C.red;
+          : "#ef4444";
   const eoisub = data.eoi_summary || {};
-  // Deduplicate by state name before counting — state_breakdown has one row per state+visa_type
   const uniqueStates = Array.from(
     new Map(
       (data.state_breakdown || []).map((s: any) => [s.state, s]),
@@ -218,7 +282,7 @@ export default function OccupationDetail() {
   );
   const openStates = uniqueStates.filter((s: any) => s.is_open);
   const shortage = data.shortage_data?.[0];
-  const shortageStyle = shortage
+  const ssStyle = shortage
     ? SHORTAGE_LABEL[shortage.rating] || {
         label: shortage.rating,
         color: C.muted,
@@ -227,9 +291,6 @@ export default function OccupationDetail() {
   const latestEmp = data.workforce?.[data.workforce.length - 1]?.employment;
   const proj2030 = data.employment_projection?.find(
     (p: any) => p.year === 2030,
-  )?.change;
-  const proj2035 = data.employment_projection?.find(
-    (p: any) => p.year === 2035,
   )?.change;
   const ageData = (data.demographics || []).filter(
     (d: any) => d.category === "Age group",
@@ -240,14 +301,24 @@ export default function OccupationDetail() {
       d.category?.toLowerCase().includes("gender"),
   );
 
+  // ML forecast: build chart data — states as series, years as X
+  const mlYears = ["2026", "2027", "2028", "2029", "2030"];
+  const mlChartData = mlYears.map((yr) => {
+    const row: any = { year: yr };
+    for (const r of mlFcast?.records || []) row[r.state] = r[`prob_${yr}`];
+    return row;
+  });
+  const mlStates = (mlFcast?.records || []).map((r: any) => r.state);
+
   const TABS = [
     { id: "eoi", label: "SkillSelect" },
-    { id: "states", label: "Visa & State" },
+    { id: "states", label: "States & Visa" },
     { id: "points", label: "Points" },
     { id: "workforce", label: "Workforce" },
     { id: "market", label: "Job Market" },
     { id: "demographics", label: "Demographics" },
     { id: "projection", label: "Projection" },
+    { id: "ml", label: "ML Forecast" },
     { id: "nero", label: "Regional NERO" },
   ];
 
@@ -255,7 +326,7 @@ export default function OccupationDetail() {
     <div
       style={{
         padding: "24px 28px",
-        maxWidth: 1300,
+        maxWidth: 1360,
         background: C.bg,
         minHeight: "100vh",
       }}
@@ -277,7 +348,7 @@ export default function OccupationDetail() {
         ← Back
       </button>
 
-      {/* ── Header ──────────────────────────────────────────── */}
+      {/* ── Header ────────────────────────────────────────── */}
       <div
         style={{
           background: C.surface,
@@ -296,12 +367,13 @@ export default function OccupationDetail() {
             gap: 12,
           }}
         >
-          <div>
+          <div style={{ flex: 1 }}>
+            {/* Badges */}
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 8,
+                gap: 6,
                 marginBottom: 8,
                 flexWrap: "wrap",
               }}
@@ -309,7 +381,7 @@ export default function OccupationDetail() {
               <span
                 style={{
                   fontFamily: "monospace",
-                  fontSize: 12,
+                  fontSize: 11,
                   color: C.muted,
                   background: "#0a0e18",
                   padding: "3px 8px",
@@ -325,7 +397,7 @@ export default function OccupationDetail() {
                   style={{
                     background: `${VISA_COLORS[v] || C.muted}18`,
                     color: VISA_COLORS[v] || C.muted,
-                    fontSize: 11,
+                    fontSize: 10,
                     fontWeight: 700,
                     padding: "3px 10px",
                     borderRadius: 5,
@@ -335,19 +407,36 @@ export default function OccupationDetail() {
                   Visa {v}
                 </span>
               ))}
-              {shortageStyle && (
+              {ssStyle && (
                 <span
                   style={{
-                    background: `${shortageStyle.color}18`,
-                    color: shortageStyle.color,
-                    fontSize: 11,
+                    background: `${ssStyle.color}18`,
+                    color: ssStyle.color,
+                    fontSize: 10,
                     fontWeight: 700,
                     padding: "3px 10px",
                     borderRadius: 5,
-                    border: `1px solid ${shortageStyle.color}40`,
+                    border: `1px solid ${ssStyle.color}40`,
                   }}
                 >
-                  ⚡ {shortageStyle.label}
+                  ⚡ {ssStyle.label}
+                </span>
+              )}
+              {mlFcast?.records?.[0] && (
+                <MlBadge prob={mlFcast.records[0].prob_2026} />
+              )}
+              {data.osl_history?.length > 0 && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    color: C.amber,
+                    background: `${C.amber}15`,
+                    padding: "3px 8px",
+                    borderRadius: 5,
+                    border: `1px solid ${C.amber}35`,
+                  }}
+                >
+                  OSL {data.osl_history[0].skill_level_desc}
                 </span>
               )}
             </div>
@@ -366,9 +455,12 @@ export default function OccupationDetail() {
               {openStates.length} state{openStates.length !== 1 ? "s" : ""} open
               {latestEmp ? ` · ${fmt(latestEmp)} employed` : ""}
               {proj2030 ? ` · ${proj2030} growth to 2030` : ""}
+              {data.osl_history?.length > 0 &&
+                ` · OSL 2025: ${data.osl_history[data.osl_history.length - 1]?.national === 1 ? "National shortage" : "No national shortage"}`}
             </p>
           </div>
-          {/* Gauge */}
+
+          {/* Invitation rate gauge */}
           <div style={{ textAlign: "center", minWidth: 90 }}>
             <div
               style={{
@@ -429,11 +521,11 @@ export default function OccupationDetail() {
         </div>
       </div>
 
-      {/* ── KPI Row ─────────────────────────────────────────── */}
+      {/* ── KPI Row ───────────────────────────────────────── */}
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(6, 1fr)",
+          gridTemplateColumns: "repeat(6,1fr)",
           gap: 10,
           marginBottom: 20,
         }}
@@ -469,14 +561,14 @@ export default function OccupationDetail() {
           color={C.amber}
         />
         <StatBox
-          label="Shortage"
-          value={shortageStyle?.label || "—"}
-          sub={shortage?.driver || "JSA"}
-          color={shortageStyle?.color || C.muted}
+          label="JSA Shortage"
+          value={ssStyle?.label || "—"}
+          sub={shortage?.driver || "JSA assessment"}
+          color={ssStyle?.color || C.muted}
         />
       </div>
 
-      {/* ── Tabs ────────────────────────────────────────────── */}
+      {/* ── Tabs ──────────────────────────────────────────── */}
       <div
         style={{
           display: "flex",
@@ -494,15 +586,15 @@ export default function OccupationDetail() {
             key={t.id}
             onClick={() => setActiveTab(t.id)}
             style={{
-              padding: "7px 14px",
+              padding: "7px 13px",
               borderRadius: 6,
               border: "none",
               cursor: "pointer",
-              fontSize: 12,
+              fontSize: 11,
               fontWeight: 600,
+              transition: "all 0.15s",
               background: activeTab === t.id ? C.blue : "transparent",
               color: activeTab === t.id ? "#fff" : C.muted,
-              transition: "all 0.15s",
             }}
           >
             {t.label}
@@ -510,260 +602,285 @@ export default function OccupationDetail() {
         ))}
       </div>
 
-      {/* ══ SkillSelect ════════════════════════════════════════ */}
+      {/* ══ TAB: SkillSelect ══════════════════════════════════ */}
       {activeTab === "eoi" && (
         <div
           style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}
         >
+          {/* EOI Status breakdown */}
           <Card>
-            <SectionHeader title="EOI Status Breakdown" color={C.blue} />
-            {Object.entries(eoisub).map(([status, d]: any) => {
-              const col =
-                status === "INVITED"
-                  ? C.green
-                  : status === "SUBMITTED"
-                    ? C.blue
-                    : status === "HOLD"
-                      ? C.amber
-                      : C.muted;
-              return (
-                <div
-                  key={status}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "10px 0",
-                    borderBottom: `1px solid ${C.border}22`,
-                  }}
-                >
-                  <div
-                    style={{ display: "flex", alignItems: "center", gap: 8 }}
-                  >
-                    <div
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: "50%",
-                        background: col,
-                      }}
-                    />
-                    <span
-                      style={{ fontSize: 12, color: C.text, fontWeight: 500 }}
-                    >
-                      {status}
-                    </span>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <p style={{ fontSize: 13, fontWeight: 700, color: col }}>
-                      {fmt(d.total)}
-                    </p>
-                    <p style={{ fontSize: 10, color: C.muted }}>
-                      {d.min_pts}–{d.max_pts} pts
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-          </Card>
-
-          <Card>
-            <SectionHeader
-              title="Invitation Probability by Points"
-              color={C.green}
+            <SH
+              title="EOI Status Breakdown"
+              color={C.blue}
+              sub="Source: SkillSelect EOI snapshots · eoi_records"
             />
-            {[65, 70, 75, 80, 85, 90, 95, 100, 105, 110].map((pts) => {
-              const s =
-                data.points_distribution?.find((p: any) => p.points === pts)
-                  ?.SUBMITTED || 0;
-              const i =
-                data.points_distribution?.find((p: any) => p.points === pts)
-                  ?.INVITED || 0;
-              const r = s > 0 ? Math.min((i / s) * 100, 100) : 0;
-              const col =
-                r >= 50
-                  ? C.green
-                  : r >= 20
-                    ? C.blue
-                    : r >= 5
-                      ? C.amber
-                      : C.border;
-              if (s === 0 && i === 0) return null;
-              return (
-                <div
-                  key={pts}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    marginBottom: 7,
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: 11,
-                      color: C.muted,
-                      width: 40,
-                      textAlign: "right",
-                    }}
-                  >
-                    {pts}
-                  </span>
+            {Object.keys(eoisub).length === 0 ? (
+              <NoData msg="No EOI status data" />
+            ) : (
+              Object.entries(eoisub).map(([status, d]: any) => {
+                const col =
+                  status === "INVITED"
+                    ? C.green
+                    : status === "SUBMITTED"
+                      ? C.blue
+                      : status === "HOLD"
+                        ? C.amber
+                        : C.muted;
+                return (
                   <div
-                    style={{
-                      flex: 1,
-                      height: 5,
-                      background: C.border,
-                      borderRadius: 3,
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${r}%`,
-                        height: "100%",
-                        background: col,
-                        borderRadius: 3,
-                      }}
-                    />
-                  </div>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      color: col,
-                      width: 34,
-                      textAlign: "right",
-                      fontWeight: 600,
-                    }}
-                  >
-                    {r > 0 ? `${r.toFixed(0)}%` : "—"}
-                  </span>
-                  <span style={{ fontSize: 10, color: C.muted, width: 56 }}>
-                    {fmt(i)} inv
-                  </span>
-                </div>
-              );
-            })}
-          </Card>
-
-          <Card style={{ gridColumn: "1 / -1" }}>
-            <SectionHeader
-              title="Monthly EOI Pool & Invitations (Last 12 months)"
-              color={C.cyan}
-            />
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart
-                data={(data.monthly_trend || []).slice(-12)}
-                margin={{ top: 4, right: 8, bottom: 0, left: -10 }}
-              >
-                <defs>
-                  <linearGradient id="gP" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={C.blue} stopOpacity={0.25} />
-                    <stop offset="95%" stopColor={C.blue} stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="gI" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={C.green} stopOpacity={0.3} />
-                    <stop offset="95%" stopColor={C.green} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                <XAxis
-                  dataKey="month"
-                  tick={{ fill: C.muted, fontSize: 10 }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  tick={{ fill: C.muted, fontSize: 10 }}
-                  axisLine={false}
-                  tickLine={false}
-                  tickFormatter={fmtK}
-                />
-                <Tooltip content={<ChartTip />} />
-                <Area
-                  type="monotone"
-                  dataKey="pool"
-                  name="Pool"
-                  stroke={C.blue}
-                  fill="url(#gP)"
-                  strokeWidth={2}
-                  dot={false}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="invitations"
-                  name="Invited"
-                  stroke={C.green}
-                  fill="url(#gI)"
-                  strokeWidth={2}
-                  dot={{ r: 3, fill: C.green }}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </Card>
-        </div>
-      )}
-
-      {/* ══ Visa & State ════════════════════════════════════════ */}
-      {activeTab === "states" && (
-        <Card>
-          <SectionHeader title="State & Visa Availability" color={C.purple} />
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(4, 1fr)",
-              gap: 10,
-              marginBottom: 20,
-            }}
-          >
-            {STATE_ORDER.map((state) => {
-              const sd = (data.state_breakdown || []).filter(
-                (s: any) => s.state === state,
-              );
-              const isOpen = sd.some((s: any) => s.is_open);
-              return (
-                <div
-                  key={state}
-                  style={{
-                    background: isOpen ? `${C.green}10` : "#0a0e18",
-                    border: `1px solid ${isOpen ? C.green + "40" : C.border}`,
-                    borderRadius: 10,
-                    padding: "14px 16px",
-                  }}
-                >
-                  <div
+                    key={status}
                     style={{
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "center",
-                      marginBottom: 8,
+                      padding: "10px 0",
+                      borderBottom: `1px solid ${C.border}22`,
+                    }}
+                  >
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 8 }}
+                    >
+                      <div
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          background: col,
+                        }}
+                      />
+                      <span
+                        style={{ fontSize: 12, color: C.text, fontWeight: 500 }}
+                      >
+                        {status}
+                      </span>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <p style={{ fontSize: 13, fontWeight: 700, color: col }}>
+                        {fmt(d.total)}
+                      </p>
+                      <p style={{ fontSize: 10, color: C.muted }}>
+                        {d.min_pts}–{d.max_pts} pts · avg {d.avg_pts}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </Card>
+
+          {/* Invitation rate by points */}
+          <Card>
+            <SH
+              title="Invitation Rate by Points Score"
+              color={C.green}
+              sub="Invited ÷ Submitted per points band"
+            />
+            {data.points_distribution?.length === 0 ? (
+              <NoData msg="No points data" />
+            ) : (
+              [65, 70, 75, 80, 85, 90, 95, 100, 105, 110].map((pts) => {
+                const s =
+                  data.points_distribution?.find((p: any) => p.points === pts)
+                    ?.SUBMITTED || 0;
+                const i =
+                  data.points_distribution?.find((p: any) => p.points === pts)
+                    ?.INVITED || 0;
+                const r = s > 0 ? Math.min((i / s) * 100, 100) : 0;
+                const col =
+                  r >= 50
+                    ? C.green
+                    : r >= 20
+                      ? C.blue
+                      : r >= 5
+                        ? C.amber
+                        : C.border;
+                if (s === 0 && i === 0) return null;
+                return (
+                  <div
+                    key={pts}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      marginBottom: 7,
                     }}
                   >
                     <span
                       style={{
-                        fontSize: 14,
-                        fontWeight: 800,
-                        color: isOpen ? C.green : C.muted,
+                        fontSize: 11,
+                        color: C.muted,
+                        width: 38,
+                        textAlign: "right",
                       }}
                     >
-                      {state}
+                      {pts}pts
                     </span>
+                    <div
+                      style={{
+                        flex: 1,
+                        height: 5,
+                        background: C.border,
+                        borderRadius: 3,
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${r}%`,
+                          height: "100%",
+                          background: col,
+                          borderRadius: 3,
+                        }}
+                      />
+                    </div>
                     <span
                       style={{
-                        fontSize: 10,
-                        fontWeight: 700,
-                        color: isOpen ? C.green : C.muted,
-                        background: isOpen ? `${C.green}20` : `${C.muted}15`,
-                        padding: "2px 7px",
-                        borderRadius: 4,
+                        fontSize: 11,
+                        color: col,
+                        width: 34,
+                        textAlign: "right",
+                        fontWeight: 600,
                       }}
                     >
-                      {isOpen ? "OPEN" : "CLOSED"}
+                      {r > 0 ? `${r.toFixed(0)}%` : "—"}
+                    </span>
+                    <span style={{ fontSize: 10, color: C.muted, width: 52 }}>
+                      {fmt(i)} inv
                     </span>
                   </div>
-                  {sd.map((s: any) => {
-                    const stateQuota = quota?.[state]?.[s.visa_type];
-                    return (
-                      <div key={s.visa_type} style={{ marginBottom: 5 }}>
+                );
+              })
+            )}
+          </Card>
+
+          {/* Monthly EOI trend */}
+          <Card style={{ gridColumn: "1 / -1" }}>
+            <SH
+              title="Monthly EOI Pool & Invitations — All Time"
+              color={C.cyan}
+              sub="Source: eoi_records · All available snapshot months"
+            />
+            {data.monthly_trend?.length === 0 ? (
+              <NoData msg="No monthly trend data" />
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart
+                  data={data.monthly_trend?.slice(-18) || []}
+                  margin={{ top: 4, right: 8, bottom: 0, left: -10 }}
+                >
+                  <defs>
+                    <linearGradient id="gP" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={C.blue} stopOpacity={0.25} />
+                      <stop offset="95%" stopColor={C.blue} stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="gI" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={C.green} stopOpacity={0.3} />
+                      <stop offset="95%" stopColor={C.green} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                  <XAxis
+                    dataKey="month"
+                    tick={{ fill: C.muted, fontSize: 10 }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tick={{ fill: C.muted, fontSize: 10 }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={fmtK}
+                  />
+                  <Tooltip content={<ChartTip />} />
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Area
+                    type="monotone"
+                    dataKey="pool"
+                    name="Pool"
+                    stroke={C.blue}
+                    fill="url(#gP)"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="invitations"
+                    name="Invited"
+                    stroke={C.green}
+                    fill="url(#gI)"
+                    strokeWidth={2}
+                    dot={{ r: 3, fill: C.green }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {/* ══ TAB: States & Visa ════════════════════════════════ */}
+      {activeTab === "states" && (
+        <div>
+          <Card style={{ marginBottom: 14 }}>
+            <SH
+              title="State & Visa Availability"
+              color={C.purple}
+              sub="Source: eoi_records — last 12 snapshot months"
+            />
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(4,1fr)",
+                gap: 10,
+                marginBottom: 20,
+              }}
+            >
+              {STATE_ORDER.map((state) => {
+                const sd = (data.state_breakdown || []).filter(
+                  (s: any) => s.state === state,
+                );
+                const isOpen = sd.some((s: any) => s.is_open);
+                return (
+                  <div
+                    key={state}
+                    style={{
+                      background: isOpen ? `${C.green}10` : "#0a0e18",
+                      border: `1px solid ${isOpen ? C.green + "40" : C.border}`,
+                      borderRadius: 10,
+                      padding: "14px 16px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: 8,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 14,
+                          fontWeight: 800,
+                          color: isOpen ? C.green : C.muted,
+                        }}
+                      >
+                        {state}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          color: isOpen ? C.green : C.muted,
+                          background: isOpen ? `${C.green}20` : `${C.muted}15`,
+                          padding: "2px 7px",
+                          borderRadius: 4,
+                        }}
+                      >
+                        {isOpen ? "OPEN" : "CLOSED"}
+                      </span>
+                    </div>
+                    {sd.map((s: any) => (
+                      <div key={s.visa_type} style={{ marginBottom: 6 }}>
                         <span
                           style={{
                             fontSize: 10,
@@ -781,26 +898,92 @@ export default function OccupationDetail() {
                         <p style={{ fontSize: 10, color: C.muted }}>
                           Pool {fmt(s.pool)} · Inv {fmt(s.invitations)}
                         </p>
-                        {stateQuota ? (
+                        {quota?.[state]?.[s.visa_type] && (
                           <p style={{ fontSize: 10, color: C.cyan }}>
-                            Quota: {fmt(stateQuota)} slots
+                            Quota: {fmt(quota[state][s.visa_type])} slots
                           </p>
-                        ) : null}
+                        )}
                       </div>
-                    );
-                  })}
-                  {sd.length === 0 && (
-                    <p style={{ fontSize: 11, color: "#1f2937" }}>No data</p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                    ))}
+                    {sd.length === 0 && (
+                      <p style={{ fontSize: 11, color: C.muted }}>
+                        No EOI data
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* State pool bar chart */}
+            {data.state_breakdown?.length > 0 &&
+              (() => {
+                const byState: Record<string, { pool: number; inv: number }> =
+                  {};
+                for (const s of data.state_breakdown) {
+                  if (!byState[s.state]) byState[s.state] = { pool: 0, inv: 0 };
+                  byState[s.state].pool += s.pool;
+                  byState[s.state].inv += s.invitations;
+                }
+                const chartD = Object.entries(byState).map(([state, v]) => ({
+                  state,
+                  ...v,
+                }));
+                return (
+                  <>
+                    <SH
+                      title="EOI Pool vs Invitations by State"
+                      color={C.blue}
+                    />
+                    <ResponsiveContainer width="100%" height={180}>
+                      <BarChart
+                        data={chartD}
+                        margin={{ top: 4, right: 8, bottom: 0, left: -10 }}
+                      >
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          stroke={C.border}
+                        />
+                        <XAxis
+                          dataKey="state"
+                          tick={{ fill: C.muted, fontSize: 10 }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          tick={{ fill: C.muted, fontSize: 9 }}
+                          axisLine={false}
+                          tickLine={false}
+                          tickFormatter={fmtK}
+                        />
+                        <Tooltip content={<ChartTip />} />
+                        <Legend wrapperStyle={{ fontSize: 10 }} />
+                        <Bar
+                          dataKey="pool"
+                          name="Pool"
+                          fill={`${C.blue}80`}
+                          radius={[3, 3, 0, 0]}
+                        />
+                        <Bar
+                          dataKey="inv"
+                          name="Invitations"
+                          fill={C.green}
+                          radius={[3, 3, 0, 0]}
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </>
+                );
+              })()}
+          </Card>
+
+          {/* Top regions */}
           {data.top_regions?.length > 0 && (
-            <>
-              <SectionHeader
+            <Card>
+              <SH
                 title="Top SA4 Regions by Employment"
                 color={C.cyan}
+                sub="Source: jsa_top10 · Employment category"
               />
               <div
                 style={{
@@ -826,36 +1009,56 @@ export default function OccupationDetail() {
                         fontSize: 11,
                         fontWeight: 800,
                         color: r.rank <= 3 ? C.amber : C.muted,
-                        width: 20,
+                        width: 22,
                       }}
                     >
                       #{r.rank}
                     </span>
-                    <span style={{ fontSize: 12, color: C.text, flex: 1 }}>
-                      {r.region}
-                    </span>
+                    <div style={{ flex: 1 }}>
+                      <div
+                        style={{
+                          height: 3,
+                          background: C.border,
+                          borderRadius: 2,
+                          marginBottom: 3,
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: `${(r.value / (data.top_regions[0]?.value || 1)) * 100}%`,
+                            height: "100%",
+                            background: C.green,
+                            borderRadius: 2,
+                          }}
+                        />
+                      </div>
+                      <span style={{ fontSize: 11, color: C.text }}>
+                        {r.region}
+                      </span>
+                    </div>
                     <span
-                      style={{ fontSize: 12, fontWeight: 700, color: C.blue }}
+                      style={{ fontSize: 12, fontWeight: 700, color: C.green }}
                     >
                       {fmt(r.value)}
                     </span>
                   </div>
                 ))}
               </div>
-            </>
+            </Card>
           )}
-        </Card>
+        </div>
       )}
 
-      {/* ══ Points ══════════════════════════════════════════════ */}
+      {/* ══ TAB: Points ════════════════════════════════════════ */}
       {activeTab === "points" && (
         <Card>
-          <SectionHeader
+          <SH
             title="Points Distribution — Submitted vs Invited"
-            color={C.amber}
+            color={C.purple}
+            sub="Source: eoi_records · Latest year · All states"
           />
           {data.points_distribution?.length > 0 ? (
-            <ResponsiveContainer width="100%" height={320}>
+            <ResponsiveContainer width="100%" height={340}>
               <BarChart
                 data={data.points_distribution}
                 margin={{ top: 4, right: 8, bottom: 0, left: -10 }}
@@ -874,11 +1077,11 @@ export default function OccupationDetail() {
                   tickFormatter={fmtK}
                 />
                 <Tooltip content={<ChartTip />} />
+                <Legend wrapperStyle={{ fontSize: 10 }} />
                 <Bar
                   dataKey="SUBMITTED"
                   name="Submitted"
-                  fill={C.blue}
-                  fillOpacity={0.5}
+                  fill={`${C.blue}70`}
                   radius={[3, 3, 0, 0]}
                 />
                 <Bar
@@ -890,20 +1093,22 @@ export default function OccupationDetail() {
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <NoData label="No points data available" />
+            <NoData msg="No points distribution data" />
           )}
         </Card>
       )}
 
-      {/* ══ Workforce ════════════════════════════════════════════ */}
+      {/* ══ TAB: Workforce ════════════════════════════════════ */}
       {activeTab === "workforce" && (
         <div
           style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}
         >
+          {/* Employment trend */}
           <Card style={{ gridColumn: "1 / -1" }}>
-            <SectionHeader
+            <SH
               title="Employment Trend (Quarterly)"
               color={C.cyan}
+              sub="Source: jsa_quarterly_employment"
             />
             {data.workforce?.length > 0 ? (
               <ResponsiveContainer width="100%" height={240}>
@@ -943,16 +1148,19 @@ export default function OccupationDetail() {
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
-              <NoData label="No employment data available" />
+              <NoData msg="No employment data — run jsa_ingestor.py" />
             )}
           </Card>
 
+          {/* Recruitment */}
           <Card>
-            <SectionHeader title="Recruitment Insights" color={C.red} />
+            <SH
+              title="Recruitment Insights"
+              color="#ef4444"
+              sub="Source: jsa_recruitment"
+            />
             {data.recruitment ? (
-              <div
-                style={{ display: "flex", flexDirection: "column", gap: 10 }}
-              >
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {[
                   {
                     label: "Vacancies Filled",
@@ -963,29 +1171,29 @@ export default function OccupationDetail() {
                         : C.amber,
                   },
                   {
-                    label: "Avg Applicants / Vacancy",
-                    value: data.recruitment.avg_applicants?.toFixed(1),
+                    label: "Avg Applicants/Vacancy",
+                    value: (data.recruitment.avg_applicants || 0).toFixed(1),
                     color: C.blue,
                   },
                   {
-                    label: "Avg Qualified Applicants",
-                    value: data.recruitment.avg_qualified?.toFixed(1),
+                    label: "Avg Qualified",
+                    value: (data.recruitment.avg_qualified || 0).toFixed(1),
                     color: C.purple,
                   },
                   {
-                    label: "Avg Suitable Applicants",
-                    value: data.recruitment.avg_suitable?.toFixed(1),
+                    label: "Avg Suitable",
+                    value: (data.recruitment.avg_suitable || 0).toFixed(1),
                     color: C.cyan,
                   },
                   {
-                    label: "Avg Experience Required",
-                    value: `${data.recruitment.avg_experience?.toFixed(1)} yrs`,
+                    label: "Avg Experience Req'd",
+                    value: `${(data.recruitment.avg_experience || 0).toFixed(1)} yrs`,
                     color: C.amber,
                   },
                   {
                     label: "Require Experience",
                     value: pct(data.recruitment.pct_require_exp || 0),
-                    color: C.red,
+                    color: "#ef4444",
                   },
                 ].map((item) => (
                   <div
@@ -1013,15 +1221,20 @@ export default function OccupationDetail() {
                 ))}
               </div>
             ) : (
-              <NoData label="No recruitment data" />
+              <NoData msg="No recruitment data — run jsa_ingestor.py" />
             )}
           </Card>
 
+          {/* Education */}
           <Card>
-            <SectionHeader title="Main Education Fields" color={C.purple} />
+            <SH
+              title="Main Education Fields"
+              color={C.purple}
+              sub="Source: jsa_education"
+            />
             {data.education?.length > 0 ? (
               data.education.slice(0, 8).map((e: any, i: number) => (
-                <div key={i} style={{ marginBottom: 8 }}>
+                <div key={i} style={{ marginBottom: 10 }}>
                   <div
                     style={{
                       display: "flex",
@@ -1050,27 +1263,29 @@ export default function OccupationDetail() {
                       }}
                     />
                   </div>
-                  <p style={{ fontSize: 9, color: "#374151", marginTop: 2 }}>
+                  <p style={{ fontSize: 9, color: C.muted, marginTop: 2 }}>
                     {e.level}
                   </p>
                 </div>
               ))
             ) : (
-              <NoData label="No education data" />
+              <NoData msg="No education data — run jsa_ingestor.py" />
             )}
           </Card>
         </div>
       )}
 
-      {/* ══ Job Market ══════════════════════════════════════════ */}
+      {/* ══ TAB: Job Market ════════════════════════════════════ */}
       {activeTab === "market" && (
         <div
           style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}
         >
+          {/* Job ads */}
           <Card style={{ gridColumn: "1 / -1" }}>
-            <SectionHeader
-              title="Job Advertisements (Monthly)"
+            <SH
+              title="Job Advertisements (Monthly, Last 24 Months)"
               color={C.blue}
+              sub="Source: jsa_monthly_ads"
             />
             {data.job_vacancies?.length > 0 ? (
               <ResponsiveContainer width="100%" height={240}>
@@ -1109,12 +1324,17 @@ export default function OccupationDetail() {
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
-              <NoData label="No job ads data available" />
+              <NoData msg="No job ads data — run jsa_ingestor.py" />
             )}
           </Card>
 
+          {/* Shortage status */}
           <Card>
-            <SectionHeader title="Shortage Status" color={C.red} />
+            <SH
+              title="JSA Shortage Assessment"
+              color="#ef4444"
+              sub="Source: jsa_shortage"
+            />
             {data.shortage_data?.length > 0 ? (
               data.shortage_data.map((s: any) => {
                 const ss = SHORTAGE_LABEL[s.rating] || {
@@ -1156,12 +1376,17 @@ export default function OccupationDetail() {
                 );
               })
             ) : (
-              <NoData label="No shortage data" />
+              <NoData msg="No shortage data — run jsa_ingestor.py" />
             )}
           </Card>
 
+          {/* Top hiring regions */}
           <Card>
-            <SectionHeader title="Top Hiring Regions" color={C.green} />
+            <SH
+              title="Top Hiring Regions (SA4)"
+              color={C.green}
+              sub="Source: jsa_top10 · Employment category"
+            />
             {data.top_regions?.length > 0 ? (
               data.top_regions.map((r: any) => (
                 <div
@@ -1187,7 +1412,7 @@ export default function OccupationDetail() {
                   <div style={{ flex: 1 }}>
                     <div
                       style={{
-                        height: 4,
+                        height: 3,
                         background: C.border,
                         borderRadius: 2,
                         marginBottom: 3,
@@ -1214,21 +1439,26 @@ export default function OccupationDetail() {
                 </div>
               ))
             ) : (
-              <NoData label="No regional data" />
+              <NoData msg="No regional data — run jsa_ingestor.py" />
             )}
           </Card>
         </div>
       )}
 
-      {/* ══ Demographics ════════════════════════════════════════ */}
+      {/* ══ TAB: Demographics ══════════════════════════════════ */}
       {activeTab === "demographics" && (
         <div
           style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}
         >
+          {/* Age */}
           <Card>
-            <SectionHeader title="Age Group Distribution" color={C.purple} />
+            <SH
+              title="Age Group Distribution"
+              color={C.purple}
+              sub="Source: jsa_demographics"
+            />
             {ageData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={240}>
+              <ResponsiveContainer width="100%" height={260}>
                 <BarChart
                   data={ageData}
                   layout="vertical"
@@ -1245,14 +1475,19 @@ export default function OccupationDetail() {
                   <YAxis
                     type="category"
                     dataKey="segment"
+                    width={60}
                     tick={{ fill: C.muted, fontSize: 10 }}
                     axisLine={false}
                     tickLine={false}
-                    width={60}
                   />
                   <Tooltip
-                    content={<ChartTip />}
-                    formatter={(v: any) => `${(v * 100).toFixed(1)}%`}
+                    formatter={(v: any) => `${(+v * 100).toFixed(1)}%`}
+                    contentStyle={{
+                      background: C.surface,
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 6,
+                      fontSize: 11,
+                    }}
                   />
                   <Bar dataKey="share" name="Share" radius={[0, 4, 4, 0]}>
                     {ageData.map((_: any, i: number) => (
@@ -1262,14 +1497,19 @@ export default function OccupationDetail() {
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <NoData label="No age data" />
+              <NoData msg="No age data — run jsa_ingestor.py" />
             )}
           </Card>
 
+          {/* Gender */}
           <Card>
-            <SectionHeader title="Gender Distribution" color={C.cyan} />
+            <SH
+              title="Gender Distribution"
+              color={C.cyan}
+              sub="Source: jsa_demographics"
+            />
             {genderData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={240}>
+              <ResponsiveContainer width="100%" height={260}>
                 <PieChart>
                   <Pie
                     data={genderData}
@@ -1277,7 +1517,7 @@ export default function OccupationDetail() {
                     nameKey="segment"
                     cx="50%"
                     cy="50%"
-                    outerRadius={90}
+                    outerRadius={100}
                     label={({ name, value }: any) =>
                       `${name} ${(value * 100).toFixed(0)}%`
                     }
@@ -1286,13 +1526,21 @@ export default function OccupationDetail() {
                       <Cell key={i} fill={PALETTE[i]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(v: any) => `${(v * 100).toFixed(1)}%`} />
+                  <Tooltip
+                    formatter={(v: any) => `${(+v * 100).toFixed(1)}%`}
+                    contentStyle={{
+                      background: C.surface,
+                      border: `1px solid ${C.border}`,
+                      borderRadius: 6,
+                      fontSize: 11,
+                    }}
+                  />
                 </PieChart>
               </ResponsiveContainer>
-            ) : (
+            ) : data.demographics?.length > 0 ? (
               <div>
                 {(data.demographics || [])
-                  .slice(0, 15)
+                  .slice(0, 12)
                   .map((d: any, i: number) => (
                     <div
                       key={i}
@@ -1317,20 +1565,24 @@ export default function OccupationDetail() {
                       </span>
                     </div>
                   ))}
-                {!data.demographics?.length && (
-                  <NoData label="No demographics data" />
-                )}
               </div>
+            ) : (
+              <NoData msg="No gender data — run jsa_ingestor.py" />
             )}
           </Card>
 
-          <Card style={{ gridColumn: "1 / -1" }}>
-            <SectionHeader title="Education Fields & Levels" color={C.amber} />
-            {data.education?.length > 0 ? (
+          {/* Education full grid */}
+          {data.education?.length > 0 && (
+            <Card style={{ gridColumn: "1 / -1" }}>
+              <SH
+                title="Education Fields & Levels"
+                color={C.amber}
+                sub="Source: jsa_education"
+              />
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "repeat(3, 1fr)",
+                  gridTemplateColumns: "repeat(3,1fr)",
                   gap: 8,
                 }}
               >
@@ -1376,29 +1628,29 @@ export default function OccupationDetail() {
                   </div>
                 ))}
               </div>
-            ) : (
-              <NoData label="No education data" />
-            )}
-          </Card>
+            </Card>
+          )}
         </div>
       )}
 
-      {/* ══ Projection ══════════════════════════════════════════ */}
+      {/* ══ TAB: Projection ════════════════════════════════════ */}
       {activeTab === "projection" && (
         <div
           style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}
         >
+          {/* Employment projection */}
           <Card>
-            <SectionHeader
+            <SH
               title="Employment Growth Projection (JSA)"
               color={C.green}
+              sub="Source: jsa_projected"
             />
             {data.employment_projection?.length > 0 ? (
               <div
                 style={{
                   display: "flex",
                   flexDirection: "column",
-                  gap: 16,
+                  gap: 14,
                   marginTop: 8,
                 }}
               >
@@ -1410,7 +1662,7 @@ export default function OccupationDetail() {
                       : val >= 5
                         ? C.blue
                         : val < 0
-                          ? C.red
+                          ? "#ef4444"
                           : C.amber;
                   return (
                     <div
@@ -1419,12 +1671,12 @@ export default function OccupationDetail() {
                         background: "#0a0e18",
                         border: `1px solid ${C.border}`,
                         borderRadius: 12,
-                        padding: "20px 24px",
+                        padding: "18px 22px",
                       }}
                     >
                       <p
                         style={{
-                          fontSize: 11,
+                          fontSize: 10,
                           color: C.muted,
                           marginBottom: 4,
                         }}
@@ -1433,7 +1685,7 @@ export default function OccupationDetail() {
                       </p>
                       <p
                         style={{
-                          fontSize: 40,
+                          fontSize: 38,
                           fontWeight: 900,
                           color: col,
                           lineHeight: 1,
@@ -1441,13 +1693,13 @@ export default function OccupationDetail() {
                       >
                         {p.change}
                       </p>
-                      <p style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>
+                      <p style={{ fontSize: 10, color: C.muted, marginTop: 5 }}>
                         Projected change · {p.group}
                       </p>
                       <div
                         style={{
-                          marginTop: 10,
-                          height: 6,
+                          marginTop: 8,
+                          height: 5,
                           background: C.border,
                           borderRadius: 3,
                         }}
@@ -1466,12 +1718,17 @@ export default function OccupationDetail() {
                 })}
               </div>
             ) : (
-              <NoData label="No projection data" />
+              <NoData msg="No projection data — run jsa_ingestor.py" />
             )}
           </Card>
 
+          {/* JSA shortage detail */}
           <Card>
-            <SectionHeader title="JSA Shortage Assessment" color={C.red} />
+            <SH
+              title="JSA Shortage Assessment Detail"
+              color="#ef4444"
+              sub="Source: jsa_shortage"
+            />
             {data.shortage_data?.length > 0 ? (
               data.shortage_data.map((s: any) => {
                 const ss = SHORTAGE_LABEL[s.rating] || {
@@ -1485,7 +1742,7 @@ export default function OccupationDetail() {
                       background: "#0a0e18",
                       border: `1px solid ${ss.color}30`,
                       borderRadius: 10,
-                      padding: "16px",
+                      padding: 16,
                       marginBottom: 10,
                     }}
                   >
@@ -1537,16 +1794,17 @@ export default function OccupationDetail() {
                 );
               })
             ) : (
-              <NoData label="No shortage data" />
+              <NoData msg="No shortage data — run jsa_ingestor.py" />
             )}
           </Card>
 
-          {/* OSL History — 5-year shortage track record */}
+          {/* OSL history table — full width */}
           {data.osl_history?.length > 0 && (
             <Card style={{ gridColumn: "1 / -1" }}>
-              <SectionHeader
+              <SH
                 title="DEWR Occupation Shortage List (OSL) — 2021 to 2025"
                 color={C.amber}
+                sub={`Source: osl_shortage · Skill Level ${data.osl_history[0]?.skill_level} — ${data.osl_history[0]?.skill_level_desc}`}
               />
               <div style={{ overflowX: "auto" }}>
                 <table
@@ -1591,17 +1849,7 @@ export default function OccupationDetail() {
                   </thead>
                   <tbody>
                     {data.osl_history.map((row: any, i: number) => {
-                      const natColor = row.national === 1 ? C.red : C.green;
-                      const stateKeys = [
-                        "NSW",
-                        "VIC",
-                        "QLD",
-                        "SA",
-                        "WA",
-                        "TAS",
-                        "NT",
-                        "ACT",
-                      ];
+                      const natCol = row.national === 1 ? "#ef4444" : C.green;
                       return (
                         <tr
                           key={row.year}
@@ -1624,21 +1872,30 @@ export default function OccupationDetail() {
                           >
                             <span
                               style={{
-                                fontSize: 13,
-                                color: natColor,
+                                fontSize: 14,
+                                color: natCol,
                                 fontWeight: 800,
                               }}
                             >
                               {row.national === 1 ? "●" : "○"}
                             </span>
                           </td>
-                          {stateKeys.map((s) => {
+                          {[
+                            "NSW",
+                            "VIC",
+                            "QLD",
+                            "SA",
+                            "WA",
+                            "TAS",
+                            "NT",
+                            "ACT",
+                          ].map((s) => {
                             const val = row[s];
                             const col =
                               val === 1
-                                ? C.red
+                                ? "#ef4444"
                                 : val === 0
-                                  ? "#1f2937"
+                                  ? C.muted
                                   : C.muted;
                             return (
                               <td
@@ -1650,12 +1907,13 @@ export default function OccupationDetail() {
                               >
                                 <span
                                   style={{
-                                    fontSize: 12,
+                                    fontSize: 13,
                                     color: col,
                                     fontWeight: val === 1 ? 700 : 400,
+                                    opacity: val === 0 ? 0.3 : 1,
                                   }}
                                 >
-                                  {val === 1 ? "●" : val === 0 ? "○" : "—"}
+                                  {val === 1 ? "●" : "○"}
                                 </span>
                               </td>
                             );
@@ -1669,7 +1927,7 @@ export default function OccupationDetail() {
                                 fontWeight: 700,
                                 color:
                                   (row.shortage_state_count || 0) >= 6
-                                    ? C.red
+                                    ? "#ef4444"
                                     : (row.shortage_state_count || 0) >= 3
                                       ? C.amber
                                       : C.muted,
@@ -1684,28 +1942,294 @@ export default function OccupationDetail() {
                   </tbody>
                 </table>
               </div>
-              <p style={{ fontSize: 10, color: C.muted, marginTop: 10 }}>
-                Source: DEWR Occupation Shortage List · ● = Shortage · ○ = No
-                shortage · Skill Level {data.osl_history[0]?.skill_level} —{" "}
-                {data.osl_history[0]?.skill_level_desc}
-              </p>
             </Card>
           )}
         </div>
       )}
 
-      {/* ── 8: Regional NERO ── */}
+      {/* ══ TAB: ML Forecast ═══════════════════════════════════ */}
+      {activeTab === "ml" && (
+        <div
+          style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}
+        >
+          {!mlFcast ? (
+            <Card style={{ gridColumn: "1 / -1" }}>
+              <NoData
+                msg={`No ML forecast data for ANZSCO4 ${anzsco?.slice(0, 4)} — run shortage_forecast_ingestor.py`}
+              />
+            </Card>
+          ) : (
+            <>
+              {/* State forecast line chart */}
+              <Card style={{ gridColumn: "1 / -1" }}>
+                <SH
+                  title="ML Shortage Probability by State — 2026 to 2030"
+                  color={C.purple}
+                  sub="Source: shortage_forecast · RandomForest model · Values = probability of shortage"
+                />
+                <ResponsiveContainer width="100%" height={260}>
+                  <LineChart
+                    data={mlChartData}
+                    margin={{ top: 4, right: 16, bottom: 0, left: -10 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                    <XAxis
+                      dataKey="year"
+                      tick={{ fill: C.muted, fontSize: 11 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      domain={[0, 1]}
+                      tickFormatter={(v) => `${(v * 100).toFixed(0)}%`}
+                      tick={{ fill: C.muted, fontSize: 10 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip
+                      formatter={(v: any, name: any) => [
+                        `${(+v * 100).toFixed(1)}%`,
+                        name,
+                      ]}
+                      contentStyle={{
+                        background: C.surface,
+                        border: `1px solid ${C.border}`,
+                        borderRadius: 6,
+                        fontSize: 11,
+                      }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                    {mlStates.map((state: string) => (
+                      <Line
+                        key={state}
+                        type="monotone"
+                        dataKey={state}
+                        name={state}
+                        stroke={STATE_COLORS[state] || C.muted}
+                        strokeWidth={2}
+                        dot={{
+                          r: 4,
+                          fill: STATE_COLORS[state] || C.muted,
+                          stroke: "none",
+                        }}
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </Card>
+
+              {/* 2026 snapshot bars */}
+              <Card>
+                <SH
+                  title="2026 Shortage Risk by State"
+                  color={C.purple}
+                  sub="Probability of shortage in 2026 · Source: shortage_forecast"
+                />
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                    marginTop: 4,
+                  }}
+                >
+                  {mlFcast.records
+                    .slice()
+                    .sort((a: any, b: any) => b.prob_2026 - a.prob_2026)
+                    .map((r: any) => {
+                      const p = r.prob_2026;
+                      const col =
+                        p >= 0.65 ? "#ef4444" : p >= 0.4 ? C.amber : C.green;
+                      return (
+                        <div key={r.state}>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              marginBottom: 3,
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: 12,
+                                fontWeight: 700,
+                                color: STATE_COLORS[r.state] || C.muted,
+                              }}
+                            >
+                              {r.state}
+                            </span>
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                              }}
+                            >
+                              <MlBadge prob={p} />
+                              <span
+                                style={{
+                                  fontSize: 12,
+                                  fontWeight: 800,
+                                  color: col,
+                                }}
+                              >
+                                {(p * 100).toFixed(1)}%
+                              </span>
+                            </div>
+                          </div>
+                          <div
+                            style={{
+                              height: 5,
+                              background: C.border,
+                              borderRadius: 3,
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: `${p * 100}%`,
+                                height: "100%",
+                                background: col,
+                                borderRadius: 3,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </Card>
+
+              {/* 5-year trend table */}
+              <Card>
+                <SH
+                  title="5-Year Forecast Table"
+                  color={C.blue}
+                  sub="Shortage probability per state per year"
+                />
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    fontSize: 11,
+                  }}
+                >
+                  <thead>
+                    <tr>
+                      {[
+                        "State",
+                        "2026",
+                        "2027",
+                        "2028",
+                        "2029",
+                        "2030",
+                        "Trend",
+                      ].map((h) => (
+                        <th
+                          key={h}
+                          style={{
+                            padding: "6px 8px",
+                            textAlign: h === "State" ? "left" : "center",
+                            color: C.muted,
+                            fontWeight: 700,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.06em",
+                            fontSize: 9,
+                            borderBottom: `1px solid ${C.border}`,
+                          }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mlFcast.records.map((r: any, i: number) => {
+                      const delta = r.prob_2030 - r.prob_2026;
+                      const trendCol =
+                        delta > 0.05
+                          ? "#ef4444"
+                          : delta < -0.05
+                            ? C.green
+                            : C.muted;
+                      const trendArrow =
+                        delta > 0.05 ? "↑" : delta < -0.05 ? "↓" : "→";
+                      return (
+                        <tr
+                          key={r.state}
+                          style={{
+                            background: i % 2 === 0 ? "transparent" : "#0a0e18",
+                          }}
+                        >
+                          <td
+                            style={{
+                              padding: "7px 8px",
+                              fontWeight: 700,
+                              color: STATE_COLORS[r.state] || C.muted,
+                            }}
+                          >
+                            {r.state}
+                          </td>
+                          {["2026", "2027", "2028", "2029", "2030"].map(
+                            (yr) => {
+                              const val = r[`prob_${yr}`];
+                              const col =
+                                val >= 0.65
+                                  ? "#ef4444"
+                                  : val >= 0.4
+                                    ? C.amber
+                                    : C.green;
+                              return (
+                                <td
+                                  key={yr}
+                                  style={{
+                                    padding: "7px 8px",
+                                    textAlign: "center",
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      color: col,
+                                    }}
+                                  >
+                                    {(val * 100).toFixed(0)}%
+                                  </span>
+                                </td>
+                              );
+                            },
+                          )}
+                          <td
+                            style={{
+                              padding: "7px 8px",
+                              textAlign: "center",
+                              fontSize: 14,
+                              fontWeight: 800,
+                              color: trendCol,
+                            }}
+                          >
+                            {trendArrow}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </Card>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ══ TAB: Regional NERO ════════════════════════════════ */}
       {activeTab === "nero" && (
         <div>
           {!nero ? (
-            <div style={{ padding: "40px 0", textAlign: "center" }}>
-              <p style={{ fontSize: 12, color: C.muted }}>
-                No NERO data for ANZSCO4 {anzsco?.slice(0, 4)}
-              </p>
-              <p style={{ fontSize: 11, color: "#374151", marginTop: 6 }}>
-                Run nero_ingestor.py to load regional job demand data
-              </p>
-            </div>
+            <Card>
+              <NoData
+                msg={`No NERO data for ANZSCO4 ${anzsco?.slice(0, 4)} — run nero_ingestor.py`}
+              />
+            </Card>
           ) : (
             <div
               style={{
@@ -1714,16 +2238,18 @@ export default function OccupationDetail() {
                 gap: 16,
               }}
             >
+              {/* NERO summary stats + trend */}
               <Card style={{ gridColumn: "1 / -1" }}>
-                <SectionHeader
-                  title="NERO — Regional vs Major City (Last 3 Years)"
+                <SH
+                  title={`NERO — Regional vs Major City (${nero.latest_date || "latest"})`}
                   color={C.blue}
+                  sub="Source: nero_regional — employment estimates by remoteness"
                 />
                 <div
                   style={{
                     display: "flex",
-                    gap: 16,
-                    marginBottom: 12,
+                    gap: 14,
+                    marginBottom: 16,
                     flexWrap: "wrap",
                   }}
                 >
@@ -1754,7 +2280,7 @@ export default function OccupationDetail() {
                         background: `${k.color}10`,
                         border: `1px solid ${k.color}30`,
                         borderRadius: 8,
-                        minWidth: 150,
+                        minWidth: 160,
                       }}
                     >
                       <p
@@ -1779,7 +2305,7 @@ export default function OccupationDetail() {
                         <p
                           style={{
                             fontSize: 10,
-                            color: k.yoy >= 0 ? C.green : C.red,
+                            color: k.yoy >= 0 ? C.green : "#ef4444",
                             marginTop: 3,
                           }}
                         >
@@ -1833,10 +2359,12 @@ export default function OccupationDetail() {
                 </ResponsiveContainer>
               </Card>
 
+              {/* Northern AU */}
               <Card>
-                <SectionHeader
+                <SH
                   title="Northern Australia NERO Trend"
                   color={C.amber}
+                  sub="Source: nero_northern"
                 />
                 <ResponsiveContainer width="100%" height={200}>
                   <AreaChart
@@ -1878,7 +2406,7 @@ export default function OccupationDetail() {
                     <Area
                       type="monotone"
                       dataKey="nero_estimate"
-                      name="Northern AU NERO"
+                      name="Northern AU"
                       stroke={C.amber}
                       fill="url(#gNorth)"
                       strokeWidth={2}
@@ -1888,37 +2416,23 @@ export default function OccupationDetail() {
                 </ResponsiveContainer>
               </Card>
 
+              {/* SA4 by state */}
               <Card>
-                <SectionHeader
+                <SH
                   title="Employment by State (SA4 Level)"
                   color={C.purple}
+                  sub={`Source: nero_sa4 · ${neroSa4?.latest_date || ""} · Total: ${fmt(neroSa4?.total_employment || 0)}`}
                 />
                 {neroSa4?.by_state?.length > 0 ? (
                   <div
                     style={{ display: "flex", flexDirection: "column", gap: 6 }}
                   >
-                    <p
-                      style={{ fontSize: 10, color: C.muted, marginBottom: 4 }}
-                    >
-                      Latest: {neroSa4.latest_date} · Total:{" "}
-                      {fmt(neroSa4.total_employment)}
-                    </p>
                     {neroSa4.by_state.map((s: any) => {
                       const sp =
                         neroSa4.total_employment > 0
                           ? (s.nsc_emp / neroSa4.total_employment) * 100
                           : 0;
-                      const sc: Record<string, string> = {
-                        NSW: C.blue,
-                        VIC: C.purple,
-                        QLD: C.amber,
-                        WA: C.green,
-                        SA: C.red,
-                        TAS: C.cyan,
-                        NT: "#f97316",
-                        ACT: "#ec4899",
-                      };
-                      const col = sc[s.state] || C.muted;
+                      const col = STATE_COLORS[s.state] || C.muted;
                       return (
                         <div key={s.state}>
                           <div
@@ -1966,37 +2480,27 @@ export default function OccupationDetail() {
                     })}
                   </div>
                 ) : (
-                  <p style={{ fontSize: 12, color: C.muted }}>
-                    Run nero_sa4_ingestor.py to enable state breakdown.
-                  </p>
+                  <NoData msg="No SA4 data — run nero_sa4_ingestor.py" />
                 )}
               </Card>
 
+              {/* Top SA4 regions */}
               {neroSa4?.by_sa4?.length > 0 && (
                 <Card style={{ gridColumn: "1 / -1" }}>
-                  <SectionHeader
+                  <SH
                     title={`Top SA4 Regions — ${neroSa4.latest_date}`}
                     color={C.cyan}
+                    sub="Source: nero_sa4 · Top 12 regions by employment"
                   />
                   <div
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "repeat(4, 1fr)",
+                      gridTemplateColumns: "repeat(4,1fr)",
                       gap: 8,
                     }}
                   >
                     {neroSa4.by_sa4.slice(0, 12).map((r: any, i: number) => {
-                      const sc: Record<string, string> = {
-                        NSW: C.blue,
-                        VIC: C.purple,
-                        QLD: C.amber,
-                        WA: C.green,
-                        SA: C.red,
-                        TAS: C.cyan,
-                        NT: "#f97316",
-                        ACT: "#ec4899",
-                      };
-                      const col = sc[r.state] || C.muted;
+                      const col = STATE_COLORS[r.state] || C.muted;
                       const rp =
                         neroSa4.total_employment > 0
                           ? (r.nsc_emp / neroSa4.total_employment) * 100

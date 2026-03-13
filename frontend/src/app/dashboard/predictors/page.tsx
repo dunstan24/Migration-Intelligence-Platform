@@ -19,6 +19,7 @@ import {
   Legend,
   Cell,
 } from "recharts";
+import { useDataCache } from "@/lib/DataCacheContext";
 import { C, Card, PageWrapper } from "@/components/ui";
 
 const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -132,14 +133,14 @@ function ForecastTooltip({ active, payload }: any) {
 }
 
 export default function Predictors() {
+  const { get } = useDataCache();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [ci, setCi] = useState<"80" | "95" | "both">("80");
   const [yearFilter, setYearFilter] = useState<number | null>(null);
 
   useEffect(() => {
-    fetch(`${API}/api/data/volume-forecast`)
-      .then((r) => r.json())
+    get(`/api/data/volume-forecast`)
       .then((d) => {
         setData(d);
         setLoading(false);
