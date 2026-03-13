@@ -222,23 +222,23 @@ def get_skill_boost(points: int, english: str, experience: int) -> float:
     elif points >= 80: boost += 0.10
     elif points >= 70: boost += 0.05
     
-    # English proficiency boost
-    if english == "superior": boost += 0.10
-    elif english == "proficient": boost += 0.05
+    # English proficiency boost (Reduced influence)
+    if english == "superior": boost += 0.05
+    elif english == "proficient": boost += 0.02
     
-    # Experience boost (Tiered calibration: 0yr < 50%, 7yr = 100% only for Elite)
-    if experience >= 10: boost += 0.18
-    elif experience >= 7: boost += 0.12
-    elif experience >= 5: boost += 0.05
-    elif experience >= 4: boost -= 0.01
-    elif experience >= 3: boost -= 0.02
-    elif experience >= 2: boost -= 0.10
-    elif experience >= 1: boost -= 0.20
-    elif experience == 0: boost -= 0.45
+    # Experience boost (Targeted calibration: 0yr~43.7%, 3yr~71%, 7yrElite~90%)
+    if experience >= 10: boost += 0.20
+    elif experience >= 7: boost += 0.14
+    elif experience >= 5: boost += 0.10
+    elif experience >= 4: boost += 0.07
+    elif experience >= 3: boost += 0.05
+    elif experience >= 2: boost += 0.00
+    elif experience >= 1: boost -= 0.10
+    elif experience == 0: boost -= 0.22
     
-    # Elite Experience Bonus (reserved for high-skill candidates)
+    # Elite Experience Bonus (Targeted for ~90% at 7yr Elite)
     if experience >= 7 and (english == "superior" or points >= 75):
-        boost += 0.15
+        boost += 0.10
     
     return boost
 
