@@ -213,21 +213,26 @@ def get_quota_factor(state: str, visa: str) -> float:
         pass
     return 0.0
 
-def get_skill_boost(points: int, english: str, experience: int) -> float:
-    """Explicitly reward high skill metrics to increase score confidence."""
+def get_skill_boost(points: int, english: str, experience: int, age: int) -> float:
+    """Explicitly reward high skill metrics and apply diminishing returns for high values."""
     boost = 0.0
-    # Point-based boost (more aggressive)
-    if points >= 95: boost += 0.20
+    
+    # ── Point-based boost with Diminishing Returns ──
+    if points > 100:
+        # Counteract base model dip for high points (>100 is often an outlier)
+        boost += 0.45 + (points - 100) * 0.002
+    elif points >= 95: boost += 0.20
     elif points >= 90: boost += 0.15
     elif points >= 80: boost += 0.10
     elif points >= 70: boost += 0.05
     
-    # English proficiency boost (Reduced influence)
+    # ── English proficiency boost (Reduced influence) ──
     if english == "superior": boost += 0.05
     elif english == "proficient": boost += 0.02
     
-    # Experience boost (Targeted calibration: 0yr~43.7%, 3yr~71%, 7yrElite~90%)
-    if experience >= 10: boost += 0.20
+    # ── Experience boost with Diminishing Returns ──
+    if experience > 10:
+        boost += 0.20 + (min(experience, 20) - 10) * 0.002 # Aggressive plateau
     elif experience >= 7: boost += 0.14
     elif experience >= 5: boost += 0.10
     elif experience >= 4: boost += 0.07
@@ -236,10 +241,20 @@ def get_skill_boost(points: int, english: str, experience: int) -> float:
     elif experience >= 1: boost -= 0.10
     elif experience == 0: boost -= 0.22
     
-    # Elite Experience Bonus (Targeted for ~90% at 7yr Elite)
+    # ── Elite Experience Bonus (Targeted for ~90% at 7yr Elite) ──
     if experience >= 7 and (english == "superior" or points >= 75):
         boost += 0.10
-    
+        
+    # ── Age Penalty/Diminishing Returns (Rules for 186/190/491 subclasses) ──
+    if age >= 45:
+        # Counteract base model's extreme outliers (especially 491 visa at ~98%)
+        # We apply a heavy penalty to force a low plateau (25-35%)
+        boost -= 1.0
+        # User requested slight increase behavior, not zeroed out.
+        boost += max(0, age - 45) * 0.001 
+    elif age >= 40:
+        boost -= (age - 39) * 0.05 # Progressive penalty starting at age 40
+        
     return boost
 
 
@@ -289,7 +304,7 @@ def build_ranked_pathways(model, occupation: str, state: str,
     })
 
     eligible_190 = adj_pts >= 65 and english_level != "vocational"
-    skill_boost = get_skill_boost(points, english_level, experience)
+    skill_boost = get_skill_boost(points, english_level, experience, age)
     
     for st in ALL_STATES:
         df_st = pd.DataFrame([{
@@ -349,7 +364,7 @@ class PathwayInput(BaseModel):
     state: Literal["NSW","VIC","QLD","WA","SA","TAS","ACT","NT"] = Field(default="NSW")
     points:        int   = Field(default=80, ge=60, le=140)
     english_level: Literal["vocational","competent","proficient","superior"] = Field(default="proficient")
-    age:           int   = Field(default=30, ge=18, le=45)
+    age:           int   = Field(default=30, ge=18, le=65)
     experience:    int   = Field(default=5, ge=0, le=20)
 
 class ApprovalInput(BaseModel):
