@@ -4,8 +4,6 @@
  * Route:  /dashboard/approval
  * Model:  XGBoost (model_xgb.pkl) — binary:logistic
  * Target: 0 = Submitted/Waiting · 1 = Lodged/Approved
- * Inputs: Visa Type, Occupation (autocomplete), Points, Count EOIs, Nominated State
- * Extra:  What-If across all states
  */
 import { useState, useEffect, useRef } from "react";
 import {
@@ -53,7 +51,7 @@ const probColor = (p: number) =>
           ? "#f97316"
           : "#ef4444";
 
-// ── Styles ────────────────────────────────────────────────────
+// ── Shared styles ─────────────────────────────────────────────
 const sel: any = {
   background: C.bg,
   border: `1px solid ${C.border}`,
@@ -109,7 +107,7 @@ function OccupationSearch({
   const [results, setResults] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState(value);
+  const [confirmed, setConfirmed] = useState(false);
   const timer = useRef<any>(null);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -122,10 +120,10 @@ function OccupationSearch({
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const handleInput = (q: string) => {
+  const search = (q: string) => {
     setQuery(q);
     onChange(q);
-    setSelected("");
+    setConfirmed(false);
     clearTimeout(timer.current);
     if (!q) {
       setResults([]);
@@ -150,43 +148,87 @@ function OccupationSearch({
 
   const pick = (occ: string) => {
     setQuery(occ);
-    setSelected(occ);
     onChange(occ);
+    setConfirmed(true);
     setOpen(false);
     setResults([]);
   };
 
-  const anzscoCode = selected ? selected.split(" ")[0] : "";
-  const occName = selected ? selected.split(" ").slice(1).join(" ") : "";
+  // Highlight matching substring
+  const highlight = (occ: string, q: string) => {
+    const idx = occ.toLowerCase().indexOf(q.toLowerCase());
+    if (idx === -1 || !q) return <span>{occ}</span>;
+    return (
+      <span>
+        {occ.slice(0, idx)}
+        <span style={{ color: C.blue, fontWeight: 700 }}>
+          {occ.slice(idx, idx + q.length)}
+        </span>
+        {occ.slice(idx + q.length)}
+      </span>
+    );
+  };
 
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      {/* Input */}
       <div style={{ position: "relative" }}>
         <input
-          style={{ ...inp, paddingRight: 28 }}
+          style={{
+            ...inp,
+            paddingRight: 34,
+            borderColor: confirmed ? C.green : `${C.border}`,
+          }}
           value={query}
-          onChange={(e) => handleInput(e.target.value)}
+          onChange={(e) => search(e.target.value)}
           onFocus={() => query && results.length > 0 && setOpen(true)}
-          placeholder="e.g. software engineer, nurse, chef, 261313…"
+          placeholder="Type ANZSCO code or occupation name…"
         />
         {loading && (
           <span
             style={{
               position: "absolute",
-              right: 9,
+              right: 10,
               top: "50%",
               transform: "translateY(-50%)",
-              fontSize: 11,
-              color: C.blue,
+              fontSize: 10,
+              color: C.muted,
             }}
           >
-            &#8635;
+            …
+          </span>
+        )}
+        {confirmed && !loading && (
+          <span
+            style={{
+              position: "absolute",
+              right: 10,
+              top: "50%",
+              transform: "translateY(-50%)",
+              fontSize: 14,
+              color: C.green,
+            }}
+          >
+            ✓
           </span>
         )}
       </div>
 
-      {/* Dropdown */}
+      {confirmed && (
+        <div
+          style={{
+            marginTop: 6,
+            padding: "7px 12px",
+            background: `${C.green}10`,
+            border: `1px solid ${C.green}30`,
+            borderRadius: 6,
+          }}
+        >
+          <p style={{ fontSize: 11, color: C.green, fontWeight: 600 }}>
+            {query.split(" ")[0]} · {query.split(" ").slice(1).join(" ")}
+          </p>
+        </div>
+      )}
+
       {open && results.length > 0 && (
         <div
           style={{
@@ -194,208 +236,58 @@ function OccupationSearch({
             top: "calc(100% + 4px)",
             left: 0,
             right: 0,
-            zIndex: 200,
-            background: "#0d1117",
+            zIndex: 100,
+            background: C.surface,
             border: `1px solid ${C.border}`,
-            borderRadius: 10,
-            maxHeight: 260,
+            borderRadius: 8,
+            maxHeight: 220,
             overflowY: "auto",
-            boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
           }}
         >
-          <div
-            style={{
-              padding: "6px 12px",
-              borderBottom: `1px solid ${C.border}`,
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              position: "sticky",
-              top: 0,
-              background: "#0d1117",
-            }}
-          >
-            <span style={{ fontSize: 10, color: C.muted }}>
-              {results.length} results
-            </span>
-            <button
-              onClick={() => setOpen(false)}
+          {results.map((occ) => (
+            <div
+              key={occ}
+              onClick={() => pick(occ)}
               style={{
-                background: "none",
-                border: "none",
-                color: C.muted,
+                padding: "8px 14px",
                 cursor: "pointer",
-                fontSize: 13,
-                lineHeight: 1,
-                padding: 0,
+                fontSize: 12,
+                color: C.text,
+                borderBottom: `1px solid ${C.border}22`,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
               }}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.background = `${C.blue}18`)
+              }
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.background = "transparent")
+              }
             >
-              ✕
-            </button>
-          </div>
-
-          {results.map((occ) => {
-            const code = occ.split(" ")[0];
-            const name = occ.split(" ").slice(1).join(" ");
-            const isSelected = occ === selected;
-            const ql = query.toLowerCase();
-            const ni = name.toLowerCase().indexOf(ql);
-            return (
-              <div
-                key={occ}
-                onClick={() => pick(occ)}
+              <span
                 style={{
-                  padding: "9px 12px",
-                  cursor: "pointer",
-                  borderBottom: `1px solid ${C.border}18`,
-                  background: isSelected ? `${C.blue}15` : "transparent",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 9,
-                }}
-                onMouseEnter={(e) => {
-                  if (!isSelected)
-                    e.currentTarget.style.background = `${C.blue}0e`;
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = isSelected
-                    ? `${C.blue}15`
-                    : "transparent";
+                  fontSize: 10,
+                  color: C.muted,
+                  background: `${C.border}60`,
+                  padding: "2px 6px",
+                  borderRadius: 4,
+                  flexShrink: 0,
                 }}
               >
-                <span
-                  style={{
-                    padding: "2px 6px",
-                    borderRadius: 4,
-                    fontSize: 10,
-                    fontWeight: 800,
-                    background: isSelected ? `${C.blue}30` : `${C.border}50`,
-                    color: isSelected ? C.blue : C.muted,
-                    fontFamily: "monospace",
-                    whiteSpace: "nowrap",
-                    flexShrink: 0,
-                  }}
-                >
-                  {code}
-                </span>
-                <span
-                  style={{
-                    fontSize: 12,
-                    color: C.text,
-                    flex: 1,
-                    lineHeight: 1.3,
-                  }}
-                >
-                  {ni >= 0 ? (
-                    <>
-                      {name.slice(0, ni)}
-                      <span
-                        style={{
-                          background: `${C.blue}40`,
-                          color: C.blue,
-                          borderRadius: 2,
-                          padding: "0 1px",
-                        }}
-                      >
-                        {name.slice(ni, ni + query.length)}
-                      </span>
-                      {name.slice(ni + query.length)}
-                    </>
-                  ) : (
-                    name
-                  )}
-                </span>
-                {isSelected && (
-                  <span style={{ color: C.green, fontSize: 12 }}>✓</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* No results */}
-      {open && !loading && results.length === 0 && query && (
-        <div
-          style={{
-            position: "absolute",
-            top: "calc(100% + 4px)",
-            left: 0,
-            right: 0,
-            zIndex: 200,
-            background: "#0d1117",
-            border: `1px solid ${C.border}`,
-            borderRadius: 10,
-            padding: "12px 14px",
-            boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
-          }}
-        >
-          <p style={{ fontSize: 12, color: C.muted }}>
-            No matches for &ldquo;{query}&rdquo;
-          </p>
-          <p style={{ fontSize: 10, color: "#374151", marginTop: 4 }}>
-            Try a shorter keyword or ANZSCO code
-          </p>
-        </div>
-      )}
-
-      {/* Selected confirmation */}
-      {selected && (
-        <div
-          style={{
-            marginTop: 8,
-            padding: "8px 12px",
-            borderRadius: 8,
-            background: `${C.green}10`,
-            border: `1px solid ${C.green}30`,
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-          }}
-        >
-          <div
-            style={{
-              padding: "3px 9px",
-              borderRadius: 5,
-              fontSize: 12,
-              fontWeight: 800,
-              background: `${C.green}25`,
-              color: C.green,
-              fontFamily: "monospace",
-              flexShrink: 0,
-            }}
-          >
-            {anzscoCode}
-          </div>
-          <div style={{ flex: 1 }}>
-            <p style={{ fontSize: 12, fontWeight: 600, color: C.text }}>
-              {occName}
-            </p>
-            <p style={{ fontSize: 10, color: C.muted }}>ANZSCO confirmed ✓</p>
-          </div>
-          <button
-            onClick={() => {
-              setSelected("");
-              setQuery("");
-              onChange("");
-            }}
-            style={{
-              background: "none",
-              border: "none",
-              color: C.muted,
-              cursor: "pointer",
-              fontSize: 12,
-            }}
-          >
-            ✕
-          </button>
+                {occ.split(" ")[0]}
+              </span>
+              <span>{highlight(occ.split(" ").slice(1).join(" "), query)}</span>
+            </div>
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-// ── Gauge ─────────────────────────────────────────────────────
+// ── Radial gauge ──────────────────────────────────────────────
 function ProbGauge({ prob }: { prob: number }) {
   const pct = Math.round(prob * 100);
   const col = probColor(prob);
@@ -440,7 +332,9 @@ function ProbGauge({ prob }: { prob: number }) {
         <p style={{ fontSize: 34, fontWeight: 900, color: col, lineHeight: 1 }}>
           {pct}%
         </p>
-        <p style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>Approval</p>
+        <p style={{ fontSize: 10, color: C.muted, marginTop: 4 }}>
+          Approval Prob.
+        </p>
       </div>
     </div>
   );
@@ -458,14 +352,13 @@ function ImpBar({
 }) {
   const pct = max > 0 ? (value / max) * 100 : 0;
   const short = name
-    .replace("Nominated State_", "")
-    .replace("Visa Type_", "Visa:")
-    .replace("_submitted", "")
-    .replace("count", "cnt")
-    .replace("_", " ")
-    .slice(0, 28);
+    .replace("Nominated State_", "State: ")
+    .replace("Visa Type_", "Visa: ")
+    .replace(/_submitted/g, "")
+    .replace(/_/g, " ")
+    .slice(0, 30);
   return (
-    <div style={{ marginBottom: 6 }}>
+    <div style={{ marginBottom: 7 }}>
       <div
         style={{
           display: "flex",
@@ -568,7 +461,7 @@ export default function ApprovalScorer() {
     <div
       style={{
         padding: "24px 28px",
-        maxWidth: 1400,
+        maxWidth: 1360,
         background: C.bg,
         minHeight: "100vh",
       }}
@@ -614,7 +507,7 @@ export default function ApprovalScorer() {
           alignItems: "start",
         }}
       >
-        {/* ── FORM ─────────────────────────────────────── */}
+        {/* ── FORM ──────────────────────────────────────────── */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <Card>
             <p
@@ -622,14 +515,14 @@ export default function ApprovalScorer() {
                 fontSize: 13,
                 fontWeight: 700,
                 color: C.text,
-                marginBottom: 14,
+                marginBottom: 16,
               }}
             >
               EOI Profile
             </p>
 
             {/* Visa Type */}
-            <div style={{ marginBottom: 13 }}>
+            <div style={{ marginBottom: 14 }}>
               <FieldLabel text="Visa Type" />
               <select
                 style={sel}
@@ -644,11 +537,11 @@ export default function ApprovalScorer() {
               </select>
             </div>
 
-            {/* Occupation autocomplete */}
-            <div style={{ marginBottom: 13 }}>
+            {/* Occupation */}
+            <div style={{ marginBottom: 14 }}>
               <FieldLabel
                 text="Occupation"
-                sub="Type name or ANZSCO code — 386 occupations"
+                sub="Type ANZSCO code or name — 386 occupations supported"
               />
               <OccupationSearch
                 value={form.occupation}
@@ -657,7 +550,7 @@ export default function ApprovalScorer() {
             </div>
 
             {/* Points */}
-            <div style={{ marginBottom: 13 }}>
+            <div style={{ marginBottom: 14 }}>
               <FieldLabel text="Points Score" sub={`${form.points} pts`} />
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <button
@@ -717,43 +610,45 @@ export default function ApprovalScorer() {
                   {form.points}
                 </span>
               </div>
-              {/* Points bucket indicator */}
-              <div style={{ display: "flex", gap: 2, marginTop: 6 }}>
-                {[60, 65, 70, 75, 80, 85, 90, 100].map((t, i) => (
-                  <div
-                    key={t}
-                    style={{
-                      flex: 1,
-                      height: 3,
-                      borderRadius: 2,
-                      background: form.points >= t ? C.blue : `${C.border}60`,
-                    }}
-                  />
-                ))}
+              {/* Points bucket pills */}
+              <div
+                style={{
+                  display: "flex",
+                  gap: 4,
+                  marginTop: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                {[
+                  { label: "60+ 491 min", min: 60, max: 64 },
+                  { label: "65+ 190 min", min: 65, max: 69 },
+                  { label: "80+ Good", min: 80, max: 89 },
+                  { label: "95+ Strong", min: 95, max: 140 },
+                ].map((b) => {
+                  const active = form.points >= b.min && form.points <= b.max;
+                  return (
+                    <span
+                      key={b.label}
+                      style={{
+                        fontSize: 10,
+                        padding: "2px 8px",
+                        borderRadius: 20,
+                        background: active ? `${C.blue}25` : "transparent",
+                        border: `1px solid ${active ? C.blue : C.border}`,
+                        color: active ? C.blue : C.muted,
+                        fontWeight: active ? 700 : 400,
+                      }}
+                    >
+                      {b.label}
+                    </span>
+                  );
+                })}
               </div>
-              <p style={{ fontSize: 9, color: C.muted, marginTop: 3 }}>
-                Bucket:{" "}
-                {form.points < 65
-                  ? "<65"
-                  : form.points < 70
-                    ? "65-69"
-                    : form.points < 75
-                      ? "70-74"
-                      : form.points < 80
-                        ? "75-79"
-                        : form.points < 85
-                          ? "80-84"
-                          : form.points < 90
-                            ? "85-89"
-                            : form.points < 100
-                              ? "90-99"
-                              : "100+"}
-              </p>
             </div>
 
 
             {/* State */}
-            <div style={{ marginBottom: 18 }}>
+            <div style={{ marginBottom: 20 }}>
               <FieldLabel text="Nominated State" />
               <select
                 style={sel}
@@ -773,7 +668,7 @@ export default function ApprovalScorer() {
               disabled={loading}
               style={{
                 width: "100%",
-                padding: "11px 0",
+                padding: "12px 0",
                 borderRadius: 8,
                 border: "none",
                 cursor: loading ? "not-allowed" : "pointer",
@@ -792,7 +687,7 @@ export default function ApprovalScorer() {
               disabled={whatIfLoad}
               style={{
                 width: "100%",
-                padding: "9px 0",
+                padding: "10px 0",
                 borderRadius: 8,
                 border: `1px solid ${C.purple}`,
                 cursor: whatIfLoad ? "not-allowed" : "pointer",
@@ -808,8 +703,8 @@ export default function ApprovalScorer() {
             {error && (
               <div
                 style={{
-                  marginTop: 10,
-                  padding: "10px 12px",
+                  marginTop: 12,
+                  padding: "10px 14px",
                   background: `${C.red}12`,
                   border: `1px solid ${C.red}40`,
                   borderRadius: 8,
@@ -820,7 +715,7 @@ export default function ApprovalScorer() {
             )}
           </Card>
 
-          {/* Model info card */}
+          {/* Model info */}
           <Card>
             <p
               style={{
@@ -839,7 +734,7 @@ export default function ApprovalScorer() {
               ["Features", "32 engineered features"],
               ["Occupations", "386 via LabelEncoder"],
               ["Visa Support", "189, 190, 491"],
-              ["Target", "0=Submitted · 1=Lodged"],
+              ["Target", "0 = Submitted · 1 = Lodged"],
               ["File", "model_xgb.pkl"],
             ].map(([k, v]) => (
               <div
@@ -858,7 +753,7 @@ export default function ApprovalScorer() {
           </Card>
         </div>
 
-        {/* ── RESULTS ──────────────────────────────────── */}
+        {/* ── RESULTS ───────────────────────────────────────── */}
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {/* Placeholder */}
           {!result && whatIfData.length === 0 && (
@@ -867,18 +762,18 @@ export default function ApprovalScorer() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                height: 360,
+                height: 400,
                 background: C.surface,
                 borderRadius: 14,
                 border: `1px solid ${C.border}`,
               }}
             >
               <div style={{ textAlign: "center" }}>
-                <p style={{ fontSize: 36, marginBottom: 10 }}>🎯</p>
+                <p style={{ fontSize: 40, marginBottom: 12 }}>🎯</p>
                 <p style={{ fontSize: 14, color: C.muted }}>
                   Fill in the profile and click Score Approval
                 </p>
-                <p style={{ fontSize: 11, color: "#374151", marginTop: 4 }}>
+                <p style={{ fontSize: 11, color: "#374151", marginTop: 6 }}>
                   XGBoost model · 386 occupations · 32 engineered features
                 </p>
               </div>
@@ -894,33 +789,33 @@ export default function ApprovalScorer() {
                   background: `${probColor(result.probability)}10`,
                   border: `1px solid ${probColor(result.probability)}40`,
                   borderRadius: 14,
-                  padding: "22px 26px",
+                  padding: "24px 28px",
                 }}
               >
                 <div
                   style={{
                     display: "grid",
                     gridTemplateColumns: "1fr 200px",
-                    gap: 20,
+                    gap: 24,
                     alignItems: "center",
                   }}
                 >
                   <div>
                     <p
                       style={{
-                        fontSize: 10,
+                        fontSize: 11,
                         color: C.muted,
                         textTransform: "uppercase",
                         letterSpacing: "0.08em",
                         fontWeight: 700,
-                        marginBottom: 6,
+                        marginBottom: 8,
                       }}
                     >
                       XGBoost Prediction
                     </p>
                     <p
                       style={{
-                        fontSize: 26,
+                        fontSize: 28,
                         fontWeight: 900,
                         color: probColor(result.probability),
                         marginBottom: 6,
@@ -929,7 +824,7 @@ export default function ApprovalScorer() {
                       {result.label}
                     </p>
                     <p
-                      style={{ fontSize: 12, color: C.muted, marginBottom: 14 }}
+                      style={{ fontSize: 13, color: C.muted, marginBottom: 16 }}
                     >
                       {result.interpretation}
                     </p>
@@ -940,19 +835,19 @@ export default function ApprovalScorer() {
                         display: "flex",
                         gap: 8,
                         flexWrap: "wrap",
-                        marginBottom: 12,
+                        marginBottom: 14,
                       }}
                     >
                       {[
-                        { l: "Visa", v: `${result.inputs.visa_type}` },
-                        { l: "Points", v: `${result.inputs.points}pts` },
+                        { l: "Visa", v: result.inputs.visa_type },
+                        { l: "Points", v: `${result.inputs.points} pts` },
                         { l: "State", v: result.inputs.state },
                         { l: "EOI Count", v: result.inputs.count_eois },
                       ].map((k) => (
                         <div
                           key={k.l}
                           style={{
-                            padding: "5px 12px",
+                            padding: "6px 14px",
                             background: `${C.border}40`,
                             borderRadius: 8,
                           }}
@@ -960,7 +855,7 @@ export default function ApprovalScorer() {
                           <p style={{ fontSize: 9, color: C.muted }}>{k.l}</p>
                           <p
                             style={{
-                              fontSize: 13,
+                              fontSize: 14,
                               fontWeight: 800,
                               color: C.text,
                             }}
@@ -971,7 +866,7 @@ export default function ApprovalScorer() {
                       ))}
                     </div>
 
-                    {/* Occupation */}
+                    {/* Occupation status */}
                     <div
                       style={{
                         padding: "8px 12px",
@@ -985,24 +880,17 @@ export default function ApprovalScorer() {
                       <p
                         style={{
                           fontSize: 10,
-                          color: result.occupation_known ? C.green : C.amber,
                           fontWeight: 700,
+                          color: result.occupation_known ? C.green : C.amber,
                         }}
                       >
                         {result.occupation_known
-                          ? "✓ Occupation recognised"
-                          : "⚠ Occupation estimated"}
+                          ? "✓ Occupation recognised by encoder"
+                          : "⚠ Occupation not in encoder — estimated"}
                       </p>
                       <p style={{ fontSize: 12, color: C.text, marginTop: 2 }}>
                         {result.inputs.occupation}
                       </p>
-                      {!result.occupation_known && result.note && (
-                        <p
-                          style={{ fontSize: 10, color: C.amber, marginTop: 3 }}
-                        >
-                          {result.note}
-                        </p>
-                      )}
                     </div>
                   </div>
 
@@ -1014,7 +902,7 @@ export default function ApprovalScorer() {
                         textAlign: "center",
                         fontSize: 12,
                         color: C.muted,
-                        marginTop: 6,
+                        marginTop: 8,
                       }}
                     >
                       {result.prediction === 1
@@ -1028,7 +916,7 @@ export default function ApprovalScorer() {
             </>
           )}
 
-          {/* What-If all states */}
+          {/* What-If: all states */}
           {whatIfData.length > 0 && (
             <Card>
               <p
@@ -1042,10 +930,11 @@ export default function ApprovalScorer() {
                 What-If: Approval Probability Across All States
               </p>
               <p style={{ fontSize: 11, color: C.muted, marginBottom: 14 }}>
-                {form.occupation} · Visa {form.visa_type} · {form.points}pts ·{" "}
+                {form.occupation} · Visa {form.visa_type} · {form.points} pts ·{" "}
                 {form.count_eois} EOIs
               </p>
-              <ResponsiveContainer width="100%" height={190}>
+
+              <ResponsiveContainer width="100%" height={200}>
                 <BarChart
                   data={whatIfData}
                   margin={{ top: 4, right: 8, bottom: 0, left: -8 }}
@@ -1067,7 +956,7 @@ export default function ApprovalScorer() {
                   <Tooltip
                     formatter={(v: any) => [
                       `${(+v * 100).toFixed(1)}%`,
-                      "Approval",
+                      "Approval Prob",
                     ]}
                     contentStyle={{
                       background: C.surface,
@@ -1081,31 +970,31 @@ export default function ApprovalScorer() {
                       <Cell
                         key={d.state}
                         fill={STATE_COLORS[d.state] || C.muted}
-                        opacity={d.state === form.state ? 1 : 0.65}
+                        opacity={d.state === form.state ? 1 : 0.6}
                       />
                     ))}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
 
-              {/* State grid */}
+              {/* State ranking grid */}
               <div
                 style={{
                   display: "grid",
                   gridTemplateColumns: "repeat(4,1fr)",
                   gap: 8,
-                  marginTop: 12,
+                  marginTop: 14,
                 }}
               >
                 {whatIfData.map((d: any, i: number) => (
                   <div
                     key={d.state}
                     style={{
-                      padding: "8px 10px",
+                      padding: "10px 12px",
                       borderRadius: 8,
                       background:
                         d.state === form.state
-                          ? `${STATE_COLORS[d.state] || C.muted}18`
+                          ? `${STATE_COLORS[d.state] || C.muted}20`
                           : "transparent",
                       border: `1px solid ${
                         d.state === form.state
@@ -1118,6 +1007,7 @@ export default function ApprovalScorer() {
                       style={{
                         display: "flex",
                         justifyContent: "space-between",
+                        marginBottom: 2,
                       }}
                     >
                       <span
@@ -1129,13 +1019,13 @@ export default function ApprovalScorer() {
                       >
                         {d.state}
                       </span>
-                      <span style={{ fontSize: 9, color: C.muted }}>
+                      <span style={{ fontSize: 10, color: C.muted }}>
                         #{i + 1}
                       </span>
                     </div>
                     <p
                       style={{
-                        fontSize: 17,
+                        fontSize: 18,
                         fontWeight: 800,
                         color: probColor(d.prob),
                       }}
@@ -1153,20 +1043,20 @@ export default function ApprovalScorer() {
               {whatIfData[0] && (
                 <div
                   style={{
-                    marginTop: 12,
-                    padding: "10px 14px",
+                    marginTop: 14,
+                    padding: "12px 16px",
                     background: `${C.green}10`,
                     border: `1px solid ${C.green}30`,
                     borderRadius: 10,
                   }}
                 >
                   <p style={{ fontSize: 12, color: C.green, fontWeight: 700 }}>
-                    🏆 Best state: {whatIfData[0].state} —{" "}
+                    🏆 Best state for this profile: {whatIfData[0].state} —{" "}
                     {(whatIfData[0].prob * 100).toFixed(1)}% approval
                     probability
                   </p>
                   {whatIfData[0].state !== form.state && (
-                    <p style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                    <p style={{ fontSize: 11, color: C.muted, marginTop: 4 }}>
                       Your selected state ({form.state}):{" "}
                       {(
                         (whatIfData.find((d: any) => d.state === form.state)
